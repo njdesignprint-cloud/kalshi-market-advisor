@@ -37,10 +37,10 @@ const syntheticData = {
 };
 
 const wrapped = js + `
-globalThis.__test_exports = { buildRecommendation, renderOpportunitiesTable, renderRecommendation, pct, money };
+globalThis.__test_exports = { buildRecommendation, renderOpportunitiesTable, renderRecommendation, pct, money, calcContractsForDesiredPayout };
 `;
 eval(wrapped);
-const { buildRecommendation, renderOpportunitiesTable, renderRecommendation, pct, money } = globalThis.__test_exports;
+const { buildRecommendation, renderOpportunitiesTable, renderRecommendation, pct, money, calcContractsForDesiredPayout } = globalThis.__test_exports;
 
 const rec = buildRecommendation(syntheticData.opportunities_for_date, syntheticData.bankroll, syntheticData.date);
 console.log("has_recommendation:", rec.has_recommendation);
@@ -60,5 +60,21 @@ const recHtml = renderRecommendation(rec);
 if (!recHtml.toLowerCase().includes("combinadas")) throw new Error("Falta el aviso anti-parlay en el HTML renderizado");
 if (!recHtml.includes("AAA")) throw new Error("La recomendacion no incluye la jugada esperada");
 console.log("OK: HTML de recomendacion incluye aviso anti-parlay y la jugada esperada");
+
+const calcMia = calcContractsForDesiredPayout(20, 0.45);
+if (!calcMia || Math.abs(calcMia.contracts - 20) > 1e-9 || Math.abs(calcMia.cost - 9.0) > 1e-9) {
+  throw new Error(`Calculadora incorrecta para $20 a precio 0.45: ${JSON.stringify(calcMia)}`);
+}
+console.log("OK: calculadora de payout -> $20 a 0.45 =", calcMia.contracts, "contratos, cuesta", money(calcMia.cost));
+
+if (calcContractsForDesiredPayout(0, 0.45) !== null) throw new Error("Payout 0 deberia devolver null");
+if (calcContractsForDesiredPayout(10, 0) !== null) throw new Error("Precio 0 deberia devolver null");
+console.log("OK: calculadora devuelve null con entradas invalidas en vez de dividir por cero");
+
+const recWithCalc = renderRecommendation(rec);
+if (!recWithCalc.includes("calc-input") || !recWithCalc.includes("data-price=\"0.4\"")) {
+  throw new Error("La tabla de recomendacion no incluye el input de la calculadora con el precio correcto");
+}
+console.log("OK: la tabla de recomendacion incluye el input de la calculadora por jugada");
 
 console.log("\nTodas las pruebas del JS del dashboard pasaron.");
