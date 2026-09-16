@@ -62,7 +62,28 @@ opcional y solo te da limites de tasa mas altos.
 4. **Nunca subas tu `.env` real a un repositorio.** `.gitignore` ya lo
    excluye.
 
-## Como ejecutar
+## Como usarlo (pagina web local)
+
+La forma mas comoda de usar la herramienta es como una pagina web local:
+un formulario donde eliges fecha, monto y ligas, le das clic a "Analizar",
+y el dashboard aparece ahi mismo -- sin volver a tocar la terminal.
+
+**Windows:** doble clic en `iniciar_servidor.bat`.
+
+**Cualquier sistema:**
+```bash
+python webapp.py
+```
+
+Esto abre automaticamente tu navegador en `http://127.0.0.1:5000`. El
+servidor corre unicamente en tu maquina (no expone nada a internet) y
+sigue siendo de solo lectura: no coloca ordenes ni mueve dinero. Para
+cerrarlo, vuelve a la ventana de la terminal y presiona `Ctrl+C`.
+
+## Como ejecutar por linea de comandos (alternativa)
+
+Si prefieres no dejar un servidor corriendo, tambien puedes generar el
+reporte directamente:
 
 ```bash
 python main.py --date 2026-10-20 --bankroll 500

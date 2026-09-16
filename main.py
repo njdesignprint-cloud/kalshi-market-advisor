@@ -28,6 +28,7 @@ from connectors.sports_data import EspnSportsDataClient
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 DASHBOARD_TEMPLATE = Path(__file__).resolve().parent / "dashboard.html"
 DASHBOARD_DATA_PLACEHOLDER = "/*__KALSHI_MARKET_ADVISOR_DATA__*/ null"
+DASHBOARD_NAV_PLACEHOLDER = "<!--__KALSHI_MARKET_ADVISOR_NAV__-->"
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,8 +84,7 @@ def run_pipeline(date: str, bankroll: float, league_keys: list[str]) -> dict:
     }
 
 
-def write_dashboard(data: dict) -> Path:
-    OUTPUT_DIR.mkdir(exist_ok=True)
+def render_dashboard_html(data: dict, nav_html: str = "") -> str:
     template = DASHBOARD_TEMPLATE.read_text(encoding="utf-8")
     if DASHBOARD_DATA_PLACEHOLDER not in template:
         raise RuntimeError(
@@ -92,6 +92,13 @@ def write_dashboard(data: dict) -> Path:
             "no se puede inyectar la data generada."
         )
     rendered = template.replace(DASHBOARD_DATA_PLACEHOLDER, json.dumps(data, ensure_ascii=False, indent=2))
+    rendered = rendered.replace(DASHBOARD_NAV_PLACEHOLDER, nav_html)
+    return rendered
+
+
+def write_dashboard(data: dict) -> Path:
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    rendered = render_dashboard_html(data)
     output_path = OUTPUT_DIR / "dashboard.html"
     output_path.write_text(rendered, encoding="utf-8")
 
