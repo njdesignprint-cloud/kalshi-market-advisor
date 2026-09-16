@@ -80,6 +80,26 @@ def main():
     assert any("No se pudo confirmar el pitcher" in n for n in est_missing_era.notes)
     print("OK ERA faltante de un lado no inventa el factor:", est_missing_era.probability)
 
+    # Caso 9: un ERA extremo con pocas entradas lanzadas debe pesar mucho menos
+    # que el mismo ERA extremo con temporada completa (evita sobre-confiar en
+    # una muestra ruidosa, como el caso real: 22 entradas y ERA 9.13).
+    est_full_season = estimate_win_probability(
+        even_a2, even_b2, team_is_home=False, weights=pitcher_weights,
+        team_pitcher_era=2.50, opponent_pitcher_era=9.13,
+        team_pitcher_innings=150.0, opponent_pitcher_innings=150.0,
+    )
+    est_small_sample = estimate_win_probability(
+        even_a2, even_b2, team_is_home=False, weights=pitcher_weights,
+        team_pitcher_era=2.50, opponent_pitcher_era=9.13,
+        team_pitcher_innings=150.0, opponent_pitcher_innings=22.0,
+    )
+    assert 0.5 < est_small_sample.probability < est_full_season.probability
+    print(
+        "OK ERA con muestra chica pesa menos:",
+        f"temporada completa={est_full_season.probability:.3f}",
+        f"muestra chica={est_small_sample.probability:.3f}",
+    )
+
     print("Todas las pruebas del modelo de probabilidad pasaron.")
 
 

@@ -188,10 +188,24 @@ una ventana corta y reciente de partidos (por defecto 14 dias, ajustable
 con `--pitcher-search-days`), donde ese sesgo es pequeno porque 1-2 starts
 de mas casi no mueven un ERA acumulado de 20-30 starts. Con ventanas de 21
 y 28 dias, el Brier score fuera de muestra mejoro de forma consistente
-(~0.246 sin el factor de pitcher -> ~0.233 con el factor) -- la mejora mas
+(~0.247 sin el factor de pitcher -> ~0.23 con el factor) -- la mejora mas
 grande que se ha visto en este modelo para MLB. Aun asi, es una muestra
 mas chica que el backtest de temporada completa; tratala con la cautela
 correspondiente.
+
+**Hallazgo real al probarlo en vivo:** un abridor con solo 22 entradas
+lanzadas en toda la temporada (probablemente por lesion) tenia un ERA de
+9.13, y el modelo original le daba al equipo rival un 86% de probabilidad
+de ganar -- un numero poco creible para un solo partido de beisbol. La
+causa: el modelo trataba ese ERA igual que el de un abridor con temporada
+completa. Se agrego una atenuacion por entradas lanzadas
+(`PITCHER_INNINGS_FOR_FULL_CONFIDENCE` en `models/probability_model.py`):
+un ERA extremo con muestra chica pesa mucho menos que el mismo ERA con
+150+ entradas. Con esa correccion, el mismo partido paso de 86% a un 68%
+mucho mas razonable, y el backtest fuera de muestra mejoro todavia mas
+(ver arriba). Moraleja: un backtest agregado no siempre revela problemas
+que solo aparecen con un caso real especifico -- revisar casos
+individuales sigue siendo necesario.
 
 ## Como agregar una categoria de mercado nueva
 

@@ -65,6 +65,8 @@ class GameSample:
     actual_home_won: int
     home_pitcher_era: float | None = None
     away_pitcher_era: float | None = None
+    home_pitcher_innings: float | None = None
+    away_pitcher_innings: float | None = None
 
 
 def collect_game_samples(espn: EspnSportsDataClient) -> list[GameSample]:
@@ -135,6 +137,7 @@ def predict_all(samples: list[GameSample], weights: ModelWeights) -> list[dict]:
         estimate = estimate_win_probability(
             s.home_record, s.away_record, team_is_home=True, weights=weights,
             team_pitcher_era=s.home_pitcher_era, opponent_pitcher_era=s.away_pitcher_era,
+            team_pitcher_innings=s.home_pitcher_innings, opponent_pitcher_innings=s.away_pitcher_innings,
         )
         out.append(
             {
@@ -227,6 +230,8 @@ def collect_recent_game_samples_with_pitchers(espn: EspnSportsDataClient, days_b
                     actual_home_won=1 if own_score > opp_score else 0,
                     home_pitcher_era=home_pitcher.era if home_pitcher else None,
                     away_pitcher_era=away_pitcher.era if away_pitcher else None,
+                    home_pitcher_innings=home_pitcher.innings_pitched if home_pitcher else None,
+                    away_pitcher_innings=away_pitcher.innings_pitched if away_pitcher else None,
                 )
             )
 
@@ -338,7 +343,13 @@ def pitcher_grid_search(days_back: int = 14) -> None:
     train_samples, test_samples = with_pitchers[:split_idx], with_pitchers[split_idx:]
     print(f"Split cronologico: {len(train_samples)} entrenamiento, {len(test_samples)} prueba (fuera de muestra)\n")
 
-    baseline_weights = MLB_WEIGHTS  # pitcher_era_weight=0.0 en el default actual
+    baseline_weights = ModelWeights(
+        recent_form_weight=MLB_WEIGHTS.recent_form_weight,
+        point_diff_weight=MLB_WEIGHTS.point_diff_weight,
+        home_advantage_logit=MLB_WEIGHTS.home_advantage_logit,
+        injury_penalty_per_out_starter=MLB_WEIGHTS.injury_penalty_per_out_starter,
+        pitcher_era_weight=0.0,  # comparacion justa: mismos pesos base, sin el factor de pitcher
+    )
     print("=== Sin factor de pitcher (pesos MLB actuales), evaluado en TEST ===")
     report(predict_all(test_samples, baseline_weights), "MLB - sin pitcher - TEST")
 

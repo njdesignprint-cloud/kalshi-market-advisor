@@ -149,6 +149,8 @@ def analyze_league(
 
         pitcher_era_a: float | None = None
         pitcher_era_b: float | None = None
+        pitcher_innings_a: float | None = None
+        pitcher_innings_b: float | None = None
         if uses_starting_pitcher:
             event_id = sports_client.find_event_id(schedule_a, team_b["id"])
             if event_id:
@@ -157,10 +159,12 @@ def analyze_league(
                 pitcher_b = pitchers.get(team_b["id"])
                 pitcher_era_a = pitcher_a.era if pitcher_a else None
                 pitcher_era_b = pitcher_b.era if pitcher_b else None
+                pitcher_innings_a = pitcher_a.innings_pitched if pitcher_a else None
+                pitcher_innings_b = pitcher_b.innings_pitched if pitcher_b else None
 
-        for market, team, opponent, record, opp_record, is_home, injuries, opp_injuries, pitcher_era, opp_pitcher_era in (
-            (market_a, team_a, team_b, record_a, record_b, is_home_a, injuries_a, injuries_b, pitcher_era_a, pitcher_era_b),
-            (market_b, team_b, team_a, record_b, record_a, is_home_b, injuries_b, injuries_a, pitcher_era_b, pitcher_era_a),
+        for market, team, opponent, record, opp_record, is_home, injuries, opp_injuries, pitcher_era, opp_pitcher_era, pitcher_innings, opp_pitcher_innings in (
+            (market_a, team_a, team_b, record_a, record_b, is_home_a, injuries_a, injuries_b, pitcher_era_a, pitcher_era_b, pitcher_innings_a, pitcher_innings_b),
+            (market_b, team_b, team_a, record_b, record_a, is_home_b, injuries_b, injuries_a, pitcher_era_b, pitcher_era_a, pitcher_innings_b, pitcher_innings_a),
         ):
             if market.yes_ask is None:
                 result.skipped.append(SkippedMarket(market.ticker, "Sin precio yes_ask disponible (mercado sin liquidez)."))
@@ -175,6 +179,8 @@ def analyze_league(
                 weights=weights,
                 team_pitcher_era=pitcher_era,
                 opponent_pitcher_era=opp_pitcher_era,
+                team_pitcher_innings=pitcher_innings,
+                opponent_pitcher_innings=opp_pitcher_innings,
             )
             if is_home is None:
                 estimate.notes.append("Localia no confirmada contra el calendario de ESPN; se asumio visitante por defecto (conservador).")

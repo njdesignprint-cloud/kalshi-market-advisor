@@ -30,11 +30,13 @@ SUPUESTOS (explicitos):
      se genero el reporte.
   4b. Solo en MLB: si se conoce el pitcher abridor probable de cada
      equipo y su ERA de temporada, se agrega un componente adicional
-     (pitcher_era_weight * (ERA_rival - ERA_propio)). Si no se pudo
-     confirmar el abridor de alguno de los dos equipos, este componente
-     simplemente no se aplica (no se inventa un valor). Ver
-     ProbablePitcher en connectors/sports_data.py para la limitacion
-     sobre como se obtiene esta cifra.
+     (pitcher_era_weight * (ERA_rival - ERA_propio)), atenuado segun las
+     entradas lanzadas del abridor con menos muestra (un ERA de 9.00 con
+     solo 20 entradas lanzadas pesa mucho menos que uno de 3.50 con 150
+     entradas). Si no se pudo confirmar el abridor de alguno de los dos
+     equipos, este componente simplemente no se aplica (no se inventa un
+     valor). Ver ProbablePitcher en connectors/sports_data.py para la
+     limitacion sobre como se obtiene esta cifra.
   5. Cuando no hay suficientes partidos recientes para uno de los equipos
      (por ejemplo, en pretemporada), el modelo reduce su confianza y
      empuja la probabilidad hacia 50/50 en vez de inventar una senal.
@@ -56,6 +58,7 @@ from connectors.sports_data import InjuryReport, TeamRecord
 
 RECENT_GAMES_WINDOW = 10
 MIN_GAMES_FOR_FULL_CONFIDENCE = 5
+PITCHER_INNINGS_FOR_FULL_CONFIDENCE = 80.0  # ~13-14 starts; menos que esto, el ERA es ruidoso y se atenua
 
 _MAX_OUT_PLAYERS_COUNTED = 3  # evita que un reporte ruidoso hunda la probabilidad a 0
 
@@ -99,16 +102,22 @@ DEFAULT_WEIGHTS = ModelWeights()
 # injury_penalty_per_out_starter no se recalibro (ESPN no expone lesiones
 # historicas por fecha pasada para poder evaluarlo con backtesting).
 #
-# pitcher_era_weight=0.35 se agrego y calibro por separado, con
+# pitcher_era_weight=0.55 se agrego y calibro por separado, con
 # `tests/backtest_probability_model.py --pitcher-search` (ver docstring de
 # collect_recent_game_samples_with_pitchers para el porque de una ventana
 # corta: el ERA que da ESPN para un partido pasado es el acumulado A HOY,
 # no el que existia en ese momento, asi que una ventana larga meteria
-# informacion del futuro). Con ventanas de 21 y 28 dias, el mejor valor
-# encontrado en TRAIN fue 0.30 y 0.40 respectivamente; se uso el punto
-# medio (0.35) para no sobreajustar a una sola ventana. En ambos casos el
-# Brier score fuera de muestra (TEST) mejoro de forma clara (~0.246 sin el
-# factor -> ~0.233 con el factor), la mejora mas grande que se ha visto en
+# informacion del futuro). El componente ya viene atenuado por entradas
+# lanzadas (PITCHER_INNINGS_FOR_FULL_CONFIDENCE en este archivo) para que
+# un ERA con muestra chica (ej. un pitcher recien llamado con 20 entradas)
+# no pese igual que uno con temporada completa -- esto se descubrio
+# probando la herramienta en vivo: un abridor con 22 entradas y ERA 9.13
+# estaba inflando una probabilidad a 86%, un numero poco creible para un
+# solo partido de beisbol. Con ventanas de 21 y 28 dias (ya con la
+# atenuacion aplicada), el mejor valor encontrado en TRAIN fue 0.50 y 0.60
+# respectivamente; se uso el punto medio (0.55). En ambos casos el Brier
+# score fuera de muestra (TEST) mejoro de forma clara (~0.247 sin el
+# factor -> ~0.23 con el factor), la mejora mas grande que se ha visto en
 # este modelo para MLB. Aun asi, la muestra es chica (cientos de partidos,
 # no miles) y la ventana corta -- tratar este resultado con mas cautela
 # que la recalibracion de forma reciente/diferencial de carreras.
@@ -117,7 +126,7 @@ MLB_WEIGHTS = ModelWeights(
     point_diff_weight=0.03,
     home_advantage_logit=0.078,
     injury_penalty_per_out_starter=0.12,
-    pitcher_era_weight=0.35,
+    pitcher_era_weight=0.55,
 )
 
 LEAGUE_WEIGHTS: dict[str, ModelWeights] = {
@@ -162,6 +171,8 @@ def estimate_win_probability(
     weights: ModelWeights = DEFAULT_WEIGHTS,
     team_pitcher_era: float | None = None,
     opponent_pitcher_era: float | None = None,
+    team_pitcher_innings: float | None = None,
+    opponent_pitcher_innings: float | None = None,
 ) -> ProbabilityEstimate:
     """Estima P(team gana) usando forma reciente, local/visitante y lesiones.
 
@@ -208,11 +219,20 @@ def estimate_win_probability(
 
     pitcher_component = 0.0
     if team_pitcher_era is not None and opponent_pitcher_era is not None:
-        pitcher_component = weights.pitcher_era_weight * (opponent_pitcher_era - team_pitcher_era)
-        notes.append(
-            f"Pitcher abridor: {team.abbreviation} ERA {team_pitcher_era:.2f} vs "
-            f"{opponent.abbreviation} ERA {opponent_pitcher_era:.2f}."
-        )
+        # Un ERA con pocas entradas lanzadas es ruidoso (un pitcher recien
+        # llamado o que viene de una lesion puede tener un ERA absurdo con
+        # solo 2-3 starts). Se atenua el componente proporcional a la
+        # entrada mas chica de los dos abridores, no se descarta de una,
+        # para no perder la senal cuando ambos tienen muestra completa.
+        min_innings = None
+        if team_pitcher_innings is not None and opponent_pitcher_innings is not None:
+            min_innings = min(team_pitcher_innings, opponent_pitcher_innings)
+        sample_confidence = 1.0 if min_innings is None else min(1.0, max(0.0, min_innings / PITCHER_INNINGS_FOR_FULL_CONFIDENCE))
+        pitcher_component = weights.pitcher_era_weight * (opponent_pitcher_era - team_pitcher_era) * sample_confidence
+        note = f"Pitcher abridor: {team.abbreviation} ERA {team_pitcher_era:.2f} vs {opponent.abbreviation} ERA {opponent_pitcher_era:.2f}."
+        if sample_confidence < 0.99:
+            note += f" Atenuado por muestra chica de entradas lanzadas ({sample_confidence:.0%} de confianza)."
+        notes.append(note)
     elif weights.pitcher_era_weight:
         notes.append("No se pudo confirmar el pitcher abridor de uno o ambos equipos; ese factor no se aplico.")
 

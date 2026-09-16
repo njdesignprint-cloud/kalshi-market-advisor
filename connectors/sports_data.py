@@ -109,6 +109,7 @@ class ProbablePitcher:
     name: str
     era: float | None
     whip: float | None
+    innings_pitched: float | None  # muestra detras del ERA; un ERA con pocas entradas es ruidoso
 
 
 class SportsDataError(RuntimeError):
@@ -240,10 +241,16 @@ class EspnSportsDataClient:
                 continue
             categories = probables[0].get("statistics", {}).get("splits", {}).get("categories", [])
             stats = {c.get("name"): c.get("value") for c in categories}
+            full_innings = stats.get("fullInnings")
+            part_innings = stats.get("partInnings")  # outs de mas, 0-2 (tercios de entrada)
+            innings_pitched = None
+            if full_innings is not None:
+                innings_pitched = float(full_innings) + float(part_innings or 0) / 3
             result[str(team_id)] = ProbablePitcher(
                 name=probables[0].get("athlete", {}).get("displayName", ""),
                 era=stats.get("ERA"),
                 whip=stats.get("WHIP"),
+                innings_pitched=innings_pitched,
             )
         return result
 
