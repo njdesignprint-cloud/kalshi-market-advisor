@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kalshi Market Advisor</title>
+<style>
+  :root {
+    --bg: #f7f7f8;
+    --surface: #ffffff;
+    --border: #e2e2e6;
+    --text: #1a1a1e;
+    --text-muted: #63636c;
+    --accent: #2f5fda;
+    --positive: #0f7a3d;
+    --positive-bg: #e8f6ee;
+    --negative: #b3261e;
+    --negative-bg: #fbeceb;
+    --warning-bg: #fff6e0;
+    --warning-border: #e8c766;
+    --risk-bg: #fdecec;
+    --risk-border: #e39a97;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121214;
+      --surface: #1c1c1f;
+      --border: #303035;
+      --text: #f0f0f2;
+      --text-muted: #a0a0a8;
+      --accent: #7ea1ff;
+      --positive: #3ecf7e;
+      --positive-bg: #123322;
+      --negative: #ff6b63;
+      --negative-bg: #3a1c1a;
+      --warning-bg: #3a3116;
+      --warning-border: #8a7128;
+      --risk-bg: #3a1e1d;
+      --risk-border: #7a3b38;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    padding: 16px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header { margin-bottom: 20px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .subtitle { color: var(--text-muted); font-size: 0.9rem; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  .risks {
+    background: var(--risk-bg);
+    border: 1px solid var(--risk-border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .risks h2 { margin: 0 0 10px; font-size: 1.05rem; }
+  .risks ul { margin: 8px 0 0; padding-left: 20px; }
+  .risks li { margin-bottom: 6px; font-size: 0.9rem; }
+  .inputs { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 0.8rem; color: var(--text-muted); }
+  .field input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: var(--text);
+    font-size: 0.95rem;
+    width: 160px;
+  }
+  .field input:disabled { opacity: 0.7; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); max-width: 420px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.02em; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pos { color: var(--positive); font-weight: 600; }
+  .neg { color: var(--negative); font-weight: 600; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .badge.alta { background: var(--positive-bg); color: var(--positive); }
+  .badge.media { background: var(--warning-bg); color: #8a6d1a; }
+  .badge.baja, .badge.ninguna { background: var(--negative-bg); color: var(--negative); }
+  .summary-banner {
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 0.92rem;
+    margin-bottom: 14px;
+  }
+  .summary-banner.has-rec { background: var(--positive-bg); border-color: var(--positive); }
+  .parlay-warning {
+    background: var(--risk-bg);
+    border: 1px solid var(--risk-border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 0.85rem;
+    margin-top: 14px;
+  }
+  .rationale { font-size: 0.82rem; color: var(--text-muted); margin-top: 4px; }
+  .empty-state { text-align: center; color: var(--text-muted); padding: 40px 10px; }
+  footer { text-align: center; color: var(--text-muted); font-size: 0.78rem; margin: 24px 0 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Kalshi Market Advisor</h1>
+    <div class="subtitle" id="header-subtitle">Herramienta de investigacion de solo lectura. No coloca ordenes ni mueve dinero.</div>
+  </header>
+
+  <section class="risks">
+    <h2>Riesgos y limitaciones (leer siempre antes de operar)</h2>
+    <ul>
+      <li>Esta herramienta <strong>no es una garantia de ganancia</strong>. Es una segunda opinion basada en datos objetivos y publicos, no una prediccion confiable por si sola.</li>
+      <li>El modelo de probabilidad es deliberadamente simple (record reciente, local/visitante, diferencial de puntos, ajuste crudo por lesiones) y <strong>no esta validado con backtesting historico</strong>.</li>
+      <li>Los precios de Kalshi cambian en tiempo real; el edge mostrado aqui puede haber desaparecido para cuando decidas operar.</li>
+      <li>El tamano de cada posicion sugerida usa Kelly fraccionado con topes de riesgo, pero ninguna gestion de riesgo elimina la posibilidad de perder el dinero asignado.</li>
+      <li>Esta herramienta <strong>no arma combinadas/parlays</strong> y recomienda expresamente en contra de combinarlas cuando eso reduce el valor esperado.</li>
+      <li>En dias sin ninguna oportunidad de valor esperado positivo real, la respuesta correcta es "no hay recomendacion" -- eso no es un error de la herramienta.</li>
+      <li>Toda decision de operar es tuya, manual, directamente en kalshi.com.</li>
+    </ul>
+  </section>
+
+  <div class="card">
+    <h2>Parametros del reporte</h2>
+    <div class="inputs">
+      <div class="field">
+        <label for="date-input">Fecha de los partidos</label>
+        <input type="date" id="date-input" disabled>
+      </div>
+      <div class="field">
+        <label for="bankroll-input">Monto total a asignar (USD)</label>
+        <input type="number" id="bankroll-input" min="0" step="1">
+      </div>
+    </div>
+    <p class="hint" id="params-hint"></p>
+  </div>
+
+  <div id="content"></div>
+
+  <footer>Generado por kalshi-market-advisor. Datos de mercado: Kalshi. Datos deportivos: ESPN (publico). Solo lectura -- ninguna orden fue ni sera colocada por esta herramienta.</footer>
+</div>
+
+<script>
+// Los datos se inyectan al ejecutar `python main.py --date ... --bankroll ...`.
+// Si ves "null" aqui, todavia no se genero ningun reporte.
+const DATA = /*__KALSHI_MARKET_ADVISOR_DATA__*/ null;
+
+// --- Misma logica de portfolio.py, reimplementada en JS para permitir ---
+// --- recalcular el tamano de las posiciones si cambias el monto sin   ---
+// --- tener que volver a correr el pipeline de Python.                 ---
+const KELLY_FRACTION = 0.25;
+const MAX_SINGLE_POSITION_FRACTION = 0.10;
+const MAX_TOTAL_DEPLOYED_FRACTION = 0.50;
+const MIN_EDGE_TO_CONSIDER = 0.03;
+const MIN_EV_RETURN_TO_CONSIDER = 0.04;
+
+function fullKellyFraction(p, price) {
+  if (price <= 0 || price >= 1) return 0;
+  return (p - price) / (1 - price);
+}
+
+function buildRecommendation(opportunities, bankroll, date) {
+  const candidates = opportunities.filter(o =>
+    (o.model_confidence === "alta" || o.model_confidence === "media") &&
+    o.edge >= MIN_EDGE_TO_CONSIDER &&
+    o.ev_return_on_cost >= MIN_EV_RETURN_TO_CONSIDER &&
+    o.ev_per_contract_after_fee > 0
+  );
+
+  if (candidates.length === 0) {
+    return {
+      date, bankroll, has_recommendation: false,
+      summary: `No hay recomendacion para hoy. Ningun mercado analizado tiene un edge de al menos ${(MIN_EDGE_TO_CONSIDER*100).toFixed(0)}% y un retorno esperado de al menos ${(MIN_EV_RETURN_TO_CONSIDER*100).toFixed(0)}% sobre el costo, con datos suficientes para confiar en la estimacion del modelo.`,
+      allocations: [], total_deployed_dollars: 0, cash_reserved_dollars: bankroll,
+    };
+  }
+
+  const rawFractions = candidates.map(o => Math.min(Math.max(0, fullKellyFraction(o.model_probability, o.kalshi_yes_ask) * KELLY_FRACTION), MAX_SINGLE_POSITION_FRACTION));
+  const totalFraction = rawFractions.reduce((a, b) => a + b, 0);
+  const scale = totalFraction > MAX_TOTAL_DEPLOYED_FRACTION ? MAX_TOTAL_DEPLOYED_FRACTION / totalFraction : 1;
+
+  let totalDeployed = 0;
+  const allocations = [];
+  candidates.forEach((o, i) => {
+    const finalFraction = rawFractions[i] * scale;
+    const stake = Math.round(bankroll * finalFraction * 100) / 100;
+    if (stake <= 0) return;
+    totalDeployed += stake;
+    allocations.push({
+      market_ticker: o.market_ticker, league: o.league,
+      team_abbreviation: o.team_abbreviation, opponent_abbreviation: o.opponent_abbreviation,
+      kalshi_price: o.kalshi_yes_ask, model_probability: o.model_probability, edge: o.edge,
+      stake_dollars: stake, stake_fraction_of_bankroll: finalFraction,
+      estimated_ev_dollars: stake * o.ev_return_on_cost,
+      model_confidence: o.model_confidence, model_notes: o.model_notes,
+    });
+  });
+
+  const cashReserved = Math.round((bankroll - totalDeployed) * 100) / 100;
+  const summary = `Se encontraron ${allocations.length} oportunidad(es) con valor esperado positivo real hoy. Se recomienda desplegar $${totalDeployed.toFixed(2)} de $${bankroll.toFixed(2)} (${(totalDeployed/bankroll*100).toFixed(0)}% del bankroll) y mantener $${cashReserved.toFixed(2)} sin asignar.`;
+
+  return { date, bankroll, has_recommendation: true, summary, allocations, total_deployed_dollars: Math.round(totalDeployed*100)/100, cash_reserved_dollars: cashReserved };
+}
+
+function pct(x) { return (x * 100).toFixed(1) + "%"; }
+function money(x) { return "$" + Number(x).toFixed(2); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function renderEmptyState() {
+  document.getElementById("content").innerHTML = `
+    <div class="card empty-state">
+      <p>Todavia no se genero ningun reporte.</p>
+      <p class="hint" style="margin:0 auto;">Ejecuta <code>python main.py --date YYYY-MM-DD --bankroll MONTO</code> desde la raiz del proyecto y abre el <code>dashboard.html</code> que se genera en <code>/output</code>.</p>
+    </div>`;
+  document.getElementById("params-hint").textContent = "Sin datos cargados.";
+}
+
+function renderOpportunitiesTable(opportunities) {
+  if (opportunities.length === 0) {
+    return `<p class="hint">No hay mercados de esta fecha en el reporte generado.</p>`;
+  }
+  const rows = opportunities.map(o => {
+    const edgeClass = o.edge > 0 ? "pos" : "neg";
+    const evClass = o.ev_per_contract_after_fee > 0 ? "pos" : "neg";
+    return `<tr>
+      <td>${escapeHtml(o.team_abbreviation)} vs ${escapeHtml(o.opponent_abbreviation)}${o.is_home ? " (local)" : ""}</td>
+      <td class="num">${pct(o.kalshi_implied_probability)}</td>
+      <td class="num">${pct(o.model_probability)} <span class="badge ${o.model_confidence}">${o.model_confidence}</span></td>
+      <td class="num ${edgeClass}">${o.edge >= 0 ? "+" : ""}${pct(o.edge)}</td>
+      <td class="num ${evClass}">${o.ev_per_contract_after_fee >= 0 ? "+" : ""}${o.ev_per_contract_after_fee.toFixed(3)}</td>
+      <td class="rationale">${(o.model_notes || []).map(escapeHtml).join(" ")}</td>
+    </tr>`;
+  }).join("");
+  return `<table>
+    <thead><tr><th>Partido</th><th class="num">Kalshi</th><th class="num">Modelo</th><th class="num">Edge</th><th class="num">EV/contrato</th><th>Notas del modelo</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderRecommendation(rec) {
+  const bannerClass = rec.has_recommendation ? "summary-banner has-rec" : "summary-banner";
+  let allocTable = "";
+  if (rec.has_recommendation && rec.allocations.length > 0) {
+    const rows = rec.allocations.map(a => `<tr>
+      <td>${escapeHtml(a.team_abbreviation)} vs ${escapeHtml(a.opponent_abbreviation)}<div class="rationale">${escapeHtml(a.market_ticker)}</div></td>
+      <td class="num">${money(a.stake_dollars)}</td>
+      <td class="num">${pct(a.stake_fraction_of_bankroll)}</td>
+      <td class="num pos">${money(a.estimated_ev_dollars)}</td>
+      <td class="rationale">Kalshi ${pct(a.kalshi_price)} vs modelo ${pct(a.model_probability)} (edge ${a.edge >= 0 ? "+" : ""}${pct(a.edge)})</td>
+    </tr>`).join("");
+    allocTable = `<table>
+      <thead><tr><th>Jugada</th><th class="num">Monto</th><th class="num">% bankroll</th><th class="num">EV estimado</th><th>Razonamiento</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+  return `
+    <div class="${bannerClass}">${escapeHtml(rec.summary)}</div>
+    ${allocTable}
+    <div class="parlay-warning">
+      <strong>Sobre combinar jugadas (parlays):</strong> esta herramienta no arma combinadas. Combinar varias jugadas independientes multiplica las probabilidades de fallo conjunto y generalmente reduce el valor esperado ajustado por riesgo frente a jugarlas por separado. Si estabas pensando en combinarlas: no lo hagas.
+    </div>`;
+}
+
+function render() {
+  if (!DATA) { renderEmptyState(); return; }
+
+  document.getElementById("header-subtitle").textContent =
+    `Reporte generado el ${new Date(DATA.generated_at).toLocaleString()} · Ligas: ${DATA.leagues_analyzed.join(", ")}`;
+
+  const dateInput = document.getElementById("date-input");
+  const bankrollInput = document.getElementById("bankroll-input");
+  dateInput.value = DATA.date;
+  bankrollInput.value = DATA.bankroll;
+
+  function repaint() {
+    const bankroll = Number(bankrollInput.value) || 0;
+    const rec = buildRecommendation(DATA.opportunities_for_date, bankroll, DATA.date);
+    document.getElementById("content").innerHTML = `
+      <div class="card">
+        <h2>Oportunidades para el ${DATA.date}</h2>
+        ${renderOpportunitiesTable(DATA.opportunities_for_date)}
+      </div>
+      <div class="card">
+        <h2>Recomendacion de asignacion (bankroll: ${money(bankroll)})</h2>
+        ${renderRecommendation(rec)}
+      </div>`;
+  }
+
+  bankrollInput.addEventListener("input", repaint);
+  document.getElementById("params-hint").textContent =
+    "El monto se recalcula en el navegador con la misma logica de analysis/portfolio.py. Para analizar otra fecha o traer precios actualizados, vuelve a ejecutar main.py.";
+
+  repaint();
+}
+
+render();
+</script>
+</body>
+</html>
