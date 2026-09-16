@@ -1,17 +1,21 @@
 """Cliente de solo lectura para la API REST de Kalshi (trade-api/v2).
 
-ALCANCE DELIBERADO: este cliente expone UNICAMENTE endpoints GET publicos
-de datos de mercado (series, eventos, mercados). No existe ningun metodo
-para crear, modificar o cancelar ordenes, ni para mover fondos. Esto es
-intencional: la herramienta es de investigacion, nunca de ejecucion.
-Si en el futuro alguien necesita colocar ordenes, debe hacerlo manualmente
-en kalshi.com o con otro codigo -- no agregues esa capacidad aqui.
+ALCANCE DELIBERADO: este cliente expone UNICAMENTE endpoints GET de lectura
+-- datos de mercado (series, eventos, mercados) y, si hay credenciales
+configuradas, el balance y las posiciones de TU PROPIA cuenta
+(portfolio/balance, portfolio/positions). No existe ningun metodo para
+crear, modificar o cancelar ordenes, ni para mover fondos. Esto es
+intencional: la herramienta es de investigacion y monitoreo, nunca de
+ejecucion. Si en el futuro alguien necesita colocar ordenes, debe hacerlo
+manualmente en kalshi.com o con otro codigo -- no agregues esa capacidad
+aqui.
 
-Autenticacion: los endpoints de datos de mercado de Kalshi son publicos y
-no requieren autenticacion. Aun asi, este cliente firma las solicitudes
-con RSA-PSS (SHA-256) cuando hay credenciales configuradas, porque Kalshi
-aplica limites de tasa mas altos a las solicitudes autenticadas. Si no hay
-credenciales, el cliente sigue funcionando sin firmar.
+Autenticacion: los endpoints de datos de mercado son publicos y no
+requieren autenticacion; este cliente los firma con RSA-PSS igual cuando
+hay credenciales, porque Kalshi da limites de tasa mas altos a las
+solicitudes autenticadas. Los endpoints de portfolio/* SI requieren
+autenticacion -- sin credenciales configuradas, esos metodos fallan con un
+mensaje claro en vez de intentar adivinar.
 
 Variables de entorno:
   KALSHI_API_KEY_ID       Identificador de la API key (opcional).
@@ -39,9 +43,12 @@ DEFAULT_HOST = "https://external-api.kalshi.com"
 API_PREFIX = "/trade-api/v2"
 
 # Endpoints permitidos explicitamente. El cliente se niega a llamar
-# cualquier ruta que no empiece con uno de estos prefijos, como barrera
-# adicional contra el uso accidental de endpoints de trading/portfolio.
-_ALLOWED_PATH_PREFIXES = ("/series", "/events", "/markets")
+# cualquier ruta que no empiece con uno de estos prefijos -- barrera
+# deliberada contra agregar por accidente un endpoint de ordenes/trading.
+# Nota: /portfolio/balance y /portfolio/positions son endpoints de LECTURA
+# (GET) de tu propia cuenta; no existen ni existiran /portfolio/orders de
+# escritura en este cliente.
+_ALLOWED_PATH_PREFIXES = ("/series", "/events", "/markets", "/portfolio/balance", "/portfolio/positions")
 
 
 class KalshiClientError(RuntimeError):
@@ -80,6 +87,28 @@ class MarketQuote:
         if self.yes_ask is None:
             return None
         return self.yes_ask
+
+
+@dataclass
+class PortfolioBalance:
+    """Balance de efectivo disponible en tu cuenta de Kalshi."""
+
+    balance_dollars: float
+    portfolio_value_dollars: float
+    updated_ts: str | None
+
+
+@dataclass
+class MarketPosition:
+    """Posicion abierta en un mercado individual, tal como la reporta Kalshi."""
+
+    ticker: str
+    position: float  # contratos netos; positivo = Yes, negativo = No
+    market_exposure_dollars: float  # costo aproximado de la posicion abierta
+    realized_pnl_dollars: float
+    fees_paid_dollars: float
+    total_traded_dollars: float
+    last_updated_ts: str | None
 
 
 class KalshiClient:
@@ -222,3 +251,65 @@ class KalshiClient:
             close_time=market.get("close_time"),
             occurrence_datetime=market.get("occurrence_datetime"),
         )
+
+    def get_markets_by_tickers(self, tickers: list[str]) -> list[MarketQuote]:
+        """Trae la cotizacion actual de tickers especificos (para valuar posiciones)."""
+        if not tickers:
+            return []
+        quotes: list[MarketQuote] = []
+        # La API acepta una lista separada por comas; se trocea por si acaso
+        # para no exceder limites razonables de longitud de query string.
+        for start in range(0, len(tickers), 50):
+            batch = tickers[start : start + 50]
+            data = self._get("/markets", {"tickers": ",".join(batch), "limit": len(batch)})
+            for market in data.get("markets", []):
+                quotes.append(self._market_to_quote(market, market.get("event_ticker", "")))
+        return quotes
+
+    def _require_credentials(self) -> None:
+        if not (self.api_key_id and self._private_key):
+            raise KalshiClientError(
+                "Esta operacion requiere tu API key de Kalshi. Configura "
+                "KALSHI_API_KEY_ID y KALSHI_PRIVATE_KEY_PATH en tu .env "
+                "(ver .env.example)."
+            )
+
+    def get_balance(self) -> PortfolioBalance:
+        """Balance de efectivo de tu cuenta. Requiere credenciales configuradas."""
+        self._require_credentials()
+        data = self._get("/portfolio/balance")
+        return PortfolioBalance(
+            balance_dollars=float(data.get("balance_dollars", 0) or 0),
+            portfolio_value_dollars=float(data.get("portfolio_value_dollars", data.get("balance_dollars", 0)) or 0),
+            updated_ts=data.get("updated_ts"),
+        )
+
+    def get_positions(self) -> list[MarketPosition]:
+        """Posiciones abiertas en tu cuenta. Requiere credenciales configuradas."""
+        self._require_credentials()
+        positions: list[MarketPosition] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"count_filter": "position", "limit": 200}
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get("/portfolio/positions", params)
+            for item in data.get("market_positions", []):
+                position_fp = float(item.get("position_fp", 0) or 0)
+                if position_fp == 0:
+                    continue
+                positions.append(
+                    MarketPosition(
+                        ticker=item["ticker"],
+                        position=position_fp,
+                        market_exposure_dollars=float(item.get("market_exposure_dollars", 0) or 0),
+                        realized_pnl_dollars=float(item.get("realized_pnl_dollars", 0) or 0),
+                        fees_paid_dollars=float(item.get("fees_paid_dollars", 0) or 0),
+                        total_traded_dollars=float(item.get("total_traded_dollars", 0) or 0),
+                        last_updated_ts=item.get("last_updated_ts"),
+                    )
+                )
+            cursor = data.get("cursor") or None
+            if not cursor or not data.get("market_positions"):
+                break
+        return positions

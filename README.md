@@ -43,9 +43,12 @@ pip install -r requirements.txt
 
 ## Configuracion de credenciales
 
-Los endpoints de datos de mercado de Kalshi que usa esta herramienta son
-**publicos** y funcionan sin ninguna credencial. Configurar una API key es
-opcional y solo te da limites de tasa mas altos.
+Los endpoints de datos de mercado de Kalshi que usa el analisis y el
+dashboard son **publicos** y funcionan sin ninguna credencial -- para eso,
+configurar una API key es opcional y solo te da limites de tasa mas
+altos. Para la seccion **"Mi Portafolio"** (ver tu balance y posiciones
+reales, mas abajo) la API key **si es obligatoria**, porque son datos de
+tu propia cuenta.
 
 1. Genera una API key en Kalshi (seccion "API Keys" de tu perfil) y guarda
    el archivo `.pem` de la clave privada que te entregan (Kalshi no lo
@@ -106,6 +109,31 @@ En el dashboard puedes cambiar el monto y ver la asignacion recalculada
 al instante (misma logica que `analysis/portfolio.py`, reimplementada en
 JavaScript). Para analizar otra fecha o traer precios actualizados hay
 que volver a correr `main.py`.
+
+## Mi Portafolio (ver tu cuenta real de Kalshi)
+
+Con `python webapp.py` corriendo, entra a **"Ver mi portafolio real en
+Kalshi"** desde la pagina principal (o directamente a
+`http://127.0.0.1:5000/portafolio`). Esta seccion:
+
+- Lee tu balance y tus posiciones abiertas reales usando tu propia API key
+  (ver "Configuracion de credenciales" arriba -- aqui SI es obligatoria).
+- Calcula una ganancia/perdida no realizada **estimada** por posicion
+  (precio de venta actual del mercado menos el costo que Kalshi reporta).
+- Te avisa (en rojo) si una sola posicion concentra mas del 25% de tu
+  portafolio, si algo cierra en menos de 48 horas, o si no se pudo
+  verificar el precio actual de algo que tienes abierto.
+
+Sigue siendo de solo lectura: esta seccion nunca coloca, modifica ni
+cancela ninguna orden. Es analisis y monitoreo (implementado en
+`analysis/portfolio_monitor.py`), no ejecucion.
+
+**Limitacion honesta:** Kalshi no expone un "costo promedio por
+contrato" directo, asi que el calculo de ganancia/perdida es una
+aproximacion razonable segun su documentacion publica, pero no fue
+verificada contra una cuenta real con historial complejo (ordenes
+parciales, promediado de precio, etc.). Compara los numeros contra tu
+cuenta real las primeras veces que la uses.
 
 ## Backtesting y recalibracion del modelo
 
