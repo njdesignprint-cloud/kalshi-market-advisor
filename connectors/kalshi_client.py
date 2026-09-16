@@ -48,7 +48,10 @@ API_PREFIX = "/trade-api/v2"
 # Nota: /portfolio/balance y /portfolio/positions son endpoints de LECTURA
 # (GET) de tu propia cuenta; no existen ni existiran /portfolio/orders de
 # escritura en este cliente.
-_ALLOWED_PATH_PREFIXES = ("/series", "/events", "/markets", "/portfolio/balance", "/portfolio/positions")
+_ALLOWED_PATH_PREFIXES = (
+    "/series", "/events", "/markets",
+    "/portfolio/balance", "/portfolio/positions", "/portfolio/fills", "/portfolio/settlements",
+)
 
 
 class KalshiClientError(RuntimeError):
@@ -109,6 +112,52 @@ class MarketPosition:
     fees_paid_dollars: float
     total_traded_dollars: float
     last_updated_ts: str | None
+
+
+@dataclass
+class Fill:
+    """Una operacion individual (compra o venta ejecutada) de tu cuenta."""
+
+    ticker: str
+    outcome_side: str  # "yes" | "no"
+    is_taker: bool
+    count: float
+    price_dollars: float  # precio del lado que compraste/vendiste (yes o no)
+    fee_cost_dollars: float
+    created_time: str | None
+
+
+@dataclass
+class Settlement:
+    """Un mercado ya resuelto en el que tenias posicion -- aqui se ve si ganaste o perdiste.
+
+    LIMITACION: los campos `revenue` y `value` que devuelve Kalshi no
+    siguen la convencion "_dollars" del resto de la API (que usa strings
+    como "0.5600"); llegan como enteros y aqui se asumen centavos, sin
+    verificar todavia contra una liquidacion real de tu cuenta. Si el
+    monto que ves aqui no coincide con Kalshi, es la primera cifra a
+    revisar.
+    """
+
+    ticker: str
+    event_ticker: str
+    market_result: str  # "yes" | "no" | "scalar"
+    yes_count: float
+    yes_total_cost_dollars: float
+    no_count: float
+    no_total_cost_dollars: float
+    revenue_dollars: float  # pago recibido (asumiendo centavos -- ver limitacion arriba)
+    fee_cost_dollars: float
+    settled_time: str | None
+
+    @property
+    def won(self) -> bool:
+        return (self.market_result == "yes" and self.yes_count > 0) or (self.market_result == "no" and self.no_count > 0)
+
+    @property
+    def net_result_dollars(self) -> float:
+        cost = self.yes_total_cost_dollars if self.yes_count > 0 else self.no_total_cost_dollars
+        return self.revenue_dollars - cost
 
 
 class KalshiClient:
@@ -313,3 +362,66 @@ class KalshiClient:
             if not cursor or not data.get("market_positions"):
                 break
         return positions
+
+    def get_fills(self, ticker: str | None = None, limit: int = 200) -> list[Fill]:
+        """Historial de operaciones (compras/ventas ejecutadas). Requiere credenciales."""
+        self._require_credentials()
+        fills: list[Fill] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"limit": limit}
+            if ticker:
+                params["ticker"] = ticker
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get("/portfolio/fills", params)
+            for item in data.get("fills", []):
+                side = item.get("outcome_side", "yes")
+                price = item.get("yes_price_dollars") if side == "yes" else item.get("no_price_dollars")
+                fills.append(
+                    Fill(
+                        ticker=item["ticker"],
+                        outcome_side=side,
+                        is_taker=bool(item.get("is_taker", False)),
+                        count=float(item.get("count_fp", 0) or 0),
+                        price_dollars=float(price or 0),
+                        fee_cost_dollars=float(item.get("fee_cost", 0) or 0),
+                        created_time=item.get("created_time"),
+                    )
+                )
+            cursor = data.get("cursor") or None
+            if not cursor or not data.get("fills"):
+                break
+        return fills
+
+    def get_settlements(self, ticker: str | None = None, limit: int = 200) -> list[Settlement]:
+        """Mercados ya resueltos en los que tuviste posicion. Requiere credenciales."""
+        self._require_credentials()
+        settlements: list[Settlement] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"limit": limit}
+            if ticker:
+                params["ticker"] = ticker
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get("/portfolio/settlements", params)
+            for item in data.get("settlements", []):
+                settlements.append(
+                    Settlement(
+                        ticker=item["ticker"],
+                        event_ticker=item.get("event_ticker", ""),
+                        market_result=item.get("market_result", ""),
+                        yes_count=float(item.get("yes_count_fp", 0) or 0),
+                        yes_total_cost_dollars=float(item.get("yes_total_cost_dollars", 0) or 0),
+                        no_count=float(item.get("no_count_fp", 0) or 0),
+                        no_total_cost_dollars=float(item.get("no_total_cost_dollars", 0) or 0),
+                        revenue_dollars=float(item.get("revenue", 0) or 0) / 100,
+                        fee_cost_dollars=float(item.get("fee_cost", 0) or 0),
+                        settled_time=item.get("settled_time"),
+                    )
+                )
+            cursor = data.get("cursor") or None
+            if not cursor or not data.get("settlements"):
+                break
+        return settlements

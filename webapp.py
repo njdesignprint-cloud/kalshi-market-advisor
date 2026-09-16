@@ -27,6 +27,8 @@ from config import LEAGUES
 from connectors.kalshi_client import KalshiClient, KalshiClientError
 from main import render_dashboard_html, run_pipeline
 
+MARKET_RESULT_LABELS = {"yes": "Yes", "no": "No", "scalar": "Escalar"}
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -176,7 +178,9 @@ PORTFOLIO_PAGE = """<!DOCTYPE html>
   <div class="risks">
     El calculo de ganancia/perdida no realizada es una aproximacion (usa el precio de venta
     actual del mercado menos el costo reportado por Kalshi); verificala contra tu cuenta real.
-    No es garantia de ganancia ni una recomendacion de compra o venta.
+    El monto recibido en cada liquidacion tambien es una conversion asumida (Kalshi no expone
+    ese campo en dolares como el resto de la API) -- compara los primeros resultados contra tu
+    cuenta real. No es garantia de ganancia ni una recomendacion de compra o venta.
   </div>
 </div>
 </body>
@@ -277,9 +281,73 @@ def render_portfolio_content() -> str:
     </div>"""
 
 
+def render_history_content() -> str:
+    client = KalshiClient()
+    try:
+        settlements = client.get_settlements(limit=100)
+        fills = client.get_fills(limit=100)
+    except KalshiClientError:
+        return ""  # ya se mostro el aviso de credenciales arriba, en Mi Portafolio
+
+    settlement_rows = []
+    for s in settlements[:30]:
+        result_class = "pos" if s.won else "neg"
+        result_text = "Ganaste" if s.won else "Perdiste"
+        net_class = "pos" if s.net_result_dollars >= 0 else "neg"
+        settlement_rows.append(f"""<tr>
+          <td>{s.ticker}<div style="color:var(--text-muted);font-size:0.78rem;">{(s.settled_time or "-")[:16].replace("T", " ")}</div></td>
+          <td>{MARKET_RESULT_LABELS.get(s.market_result, s.market_result)}</td>
+          <td class="{result_class}">{result_text}</td>
+          <td class="num">{_money(s.revenue_dollars)}</td>
+          <td class="num {net_class}">{_money(s.net_result_dollars)}</td>
+        </tr>""")
+    settlements_table = (
+        f"""<table>
+      <thead><tr><th>Mercado</th><th>Resultado</th><th>&nbsp;</th><th class="num">Recibiste</th><th class="num">Neto</th></tr></thead>
+      <tbody>{"".join(settlement_rows)}</tbody>
+    </table>"""
+        if settlements else '<p class="rationale" style="padding:8px 0;">Todavia no tienes ningun mercado liquidado.</p>'
+    )
+
+    fill_rows = []
+    for f in fills[:30]:
+        fill_rows.append(f"""<tr>
+          <td>{f.ticker}<div style="color:var(--text-muted);font-size:0.78rem;">{(f.created_time or "-")[:16].replace("T", " ")}</div></td>
+          <td>{f.outcome_side.upper()}</td>
+          <td class="num">{f.count:.2f}</td>
+          <td class="num">{f.price_dollars:.0%}</td>
+          <td class="num">{_money(f.count * f.price_dollars)}</td>
+        </tr>""")
+    fills_table = (
+        f"""<table>
+      <thead><tr><th>Mercado</th><th>Lado</th><th class="num">Contratos</th><th class="num">Precio</th><th class="num">Monto</th></tr></thead>
+      <tbody>{"".join(fill_rows)}</tbody>
+    </table>"""
+        if fills else '<p class="rationale" style="padding:8px 0;">Todavia no tienes ninguna operacion registrada.</p>'
+    )
+
+    won_count = sum(1 for s in settlements if s.won)
+    total_net = sum(s.net_result_dollars for s in settlements)
+    net_class = "pos" if total_net >= 0 else "neg"
+
+    return f"""
+    <div class="card">
+      <h2 style="margin-top:0;font-size:1.1rem;">Liquidaciones (mercados ya resueltos)</h2>
+      <div class="stat-row" style="margin-bottom:14px;">
+        <div class="stat"><div class="label">Ganados</div><div class="value">{won_count} / {len(settlements)}</div></div>
+        <div class="stat"><div class="label">Resultado neto acumulado</div><div class="value {net_class}">{_money(total_net)}</div></div>
+      </div>
+      {settlements_table}
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0;font-size:1.1rem;">Ultimas operaciones (compras/ventas)</h2>
+      {fills_table}
+    </div>"""
+
+
 @app.route("/portafolio", methods=["GET"])
 def portafolio() -> str:
-    return PORTFOLIO_PAGE.format(content=render_portfolio_content())
+    return PORTFOLIO_PAGE.format(content=render_portfolio_content() + render_history_content())
 
 
 def _open_browser() -> None:
