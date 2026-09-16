@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 venv/
 output/
+*.pem
+*private_key*
+*PRIVATE_KEY*
