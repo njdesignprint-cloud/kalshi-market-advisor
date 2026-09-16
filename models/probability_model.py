@@ -28,6 +28,13 @@ SUPUESTOS (explicitos):
      poder de las propias probabilidades implicitas de Kalshi de partidos
      pasados, etc.), ni lesiones de ultima hora que ocurran despues de que
      se genero el reporte.
+  4b. Solo en MLB: si se conoce el pitcher abridor probable de cada
+     equipo y su ERA de temporada, se agrega un componente adicional
+     (pitcher_era_weight * (ERA_rival - ERA_propio)). Si no se pudo
+     confirmar el abridor de alguno de los dos equipos, este componente
+     simplemente no se aplica (no se inventa un valor). Ver
+     ProbablePitcher en connectors/sports_data.py para la limitacion
+     sobre como se obtiene esta cifra.
   5. Cuando no hay suficientes partidos recientes para uno de los equipos
      (por ejemplo, en pretemporada), el modelo reduce su confianza y
      empuja la probabilidad hacia 50/50 en vez de inventar una senal.
@@ -71,6 +78,7 @@ class ModelWeights:
     point_diff_weight: float = 0.045         # peso del diferencial de puntos/carreras promedio
     home_advantage_logit: float = 0.25       # ventaja fija de local, en escala logit
     injury_penalty_per_out_starter: float = 0.12  # penalizacion por jugador "Out"
+    pitcher_era_weight: float = 0.0          # peso del diferencial de ERA del abridor (solo MLB; 0 = sin efecto)
 
 
 DEFAULT_WEIGHTS = ModelWeights()
@@ -90,11 +98,26 @@ DEFAULT_WEIGHTS = ModelWeights()
 # search no encontro nada mejor que usar directamente el dato empirico.
 # injury_penalty_per_out_starter no se recalibro (ESPN no expone lesiones
 # historicas por fecha pasada para poder evaluarlo con backtesting).
+#
+# pitcher_era_weight=0.35 se agrego y calibro por separado, con
+# `tests/backtest_probability_model.py --pitcher-search` (ver docstring de
+# collect_recent_game_samples_with_pitchers para el porque de una ventana
+# corta: el ERA que da ESPN para un partido pasado es el acumulado A HOY,
+# no el que existia en ese momento, asi que una ventana larga meteria
+# informacion del futuro). Con ventanas de 21 y 28 dias, el mejor valor
+# encontrado en TRAIN fue 0.30 y 0.40 respectivamente; se uso el punto
+# medio (0.35) para no sobreajustar a una sola ventana. En ambos casos el
+# Brier score fuera de muestra (TEST) mejoro de forma clara (~0.246 sin el
+# factor -> ~0.233 con el factor), la mejora mas grande que se ha visto en
+# este modelo para MLB. Aun asi, la muestra es chica (cientos de partidos,
+# no miles) y la ventana corta -- tratar este resultado con mas cautela
+# que la recalibracion de forma reciente/diferencial de carreras.
 MLB_WEIGHTS = ModelWeights(
     recent_form_weight=0.2,
     point_diff_weight=0.03,
     home_advantage_logit=0.078,
     injury_penalty_per_out_starter=0.12,
+    pitcher_era_weight=0.35,
 )
 
 LEAGUE_WEIGHTS: dict[str, ModelWeights] = {
@@ -137,6 +160,8 @@ def estimate_win_probability(
     team_injuries: list[InjuryReport] | None = None,
     opponent_injuries: list[InjuryReport] | None = None,
     weights: ModelWeights = DEFAULT_WEIGHTS,
+    team_pitcher_era: float | None = None,
+    opponent_pitcher_era: float | None = None,
 ) -> ProbabilityEstimate:
     """Estima P(team gana) usando forma reciente, local/visitante y lesiones.
 
@@ -181,7 +206,17 @@ def estimate_win_probability(
             f"{opponent.abbreviation} tiene {opp_out}. Ajuste crudo, no pondera importancia del jugador."
         )
 
-    z = form_component + point_diff_component + home_component + injury_component
+    pitcher_component = 0.0
+    if team_pitcher_era is not None and opponent_pitcher_era is not None:
+        pitcher_component = weights.pitcher_era_weight * (opponent_pitcher_era - team_pitcher_era)
+        notes.append(
+            f"Pitcher abridor: {team.abbreviation} ERA {team_pitcher_era:.2f} vs "
+            f"{opponent.abbreviation} ERA {opponent_pitcher_era:.2f}."
+        )
+    elif weights.pitcher_era_weight:
+        notes.append("No se pudo confirmar el pitcher abridor de uno o ambos equipos; ese factor no se aplico.")
+
+    z = form_component + point_diff_component + home_component + injury_component + pitcher_component
     raw_probability = _sigmoid(z)
 
     min_games = min(team_games, opp_games)
@@ -216,6 +251,7 @@ def estimate_win_probability(
             "diferencial_puntos": point_diff_component,
             "ventaja_local": home_component,
             "ajuste_lesiones": injury_component,
+            "pitcher_abridor": pitcher_component,
             "probabilidad_sin_ajustar_por_muestra": raw_probability,
         },
         notes=notes,

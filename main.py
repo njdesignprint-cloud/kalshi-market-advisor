@@ -62,7 +62,10 @@ def run_pipeline(date: str, bankroll: float, league_keys: list[str]) -> dict:
     for key in league_keys:
         league = get_league(key)
         sports_client = EspnSportsDataClient(league.espn_sport_slug, league.espn_league_slug)
-        result = analyze_league(kalshi_client, sports_client, league.key, league.kalshi_series_ticker)
+        result = analyze_league(
+            kalshi_client, sports_client, league.key, league.kalshi_series_ticker,
+            uses_starting_pitcher=league.uses_starting_pitcher,
+        )
         all_opportunities.extend(result.opportunities)
         all_skipped.extend(result.skipped)
 

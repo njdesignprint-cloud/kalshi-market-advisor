@@ -25,6 +25,7 @@ class LeagueConfig:
     kalshi_series_ticker: str
     espn_sport_slug: str
     espn_league_slug: str
+    uses_starting_pitcher: bool = False  # solo tiene sentido en beisbol
 
 
 LEAGUES: dict[str, LeagueConfig] = {
@@ -48,6 +49,7 @@ LEAGUES: dict[str, LeagueConfig] = {
         kalshi_series_ticker="KXMLBGAME",
         espn_sport_slug="baseball",
         espn_league_slug="mlb",
+        uses_starting_pitcher=True,
     ),
     "NHL": LeagueConfig(
         key="NHL",

@@ -43,9 +43,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from datetime import datetime, timedelta, timezone
+
 from config import get_league  # noqa: E402
-from connectors.sports_data import EspnSportsDataClient, TeamRecord  # noqa: E402
-from models.probability_model import ModelWeights, get_weights_for_league  # noqa: E402
+from connectors.sports_data import EspnSportsDataClient, ProbablePitcher, TeamRecord  # noqa: E402
+from models.probability_model import MLB_WEIGHTS, ModelWeights, get_weights_for_league  # noqa: E402
 from models.probability_model import estimate_win_probability  # noqa: E402
 
 RECENT_GAMES_WINDOW = 10
@@ -61,6 +63,8 @@ class GameSample:
     home_record: TeamRecord
     away_record: TeamRecord
     actual_home_won: int
+    home_pitcher_era: float | None = None
+    away_pitcher_era: float | None = None
 
 
 def collect_game_samples(espn: EspnSportsDataClient) -> list[GameSample]:
@@ -128,7 +132,10 @@ def collect_game_samples(espn: EspnSportsDataClient) -> list[GameSample]:
 def predict_all(samples: list[GameSample], weights: ModelWeights) -> list[dict]:
     out = []
     for s in samples:
-        estimate = estimate_win_probability(s.home_record, s.away_record, team_is_home=True, weights=weights)
+        estimate = estimate_win_probability(
+            s.home_record, s.away_record, team_is_home=True, weights=weights,
+            team_pitcher_era=s.home_pitcher_era, opponent_pitcher_era=s.away_pitcher_era,
+        )
         out.append(
             {
                 "predicted_prob_home_wins": estimate.probability,
@@ -137,6 +144,94 @@ def predict_all(samples: list[GameSample], weights: ModelWeights) -> list[dict]:
             }
         )
     return out
+
+
+def collect_recent_game_samples_with_pitchers(espn: EspnSportsDataClient, days_back: int = 14) -> list[GameSample]:
+    """Como collect_game_samples, pero solo mira los ultimos `days_back` dias
+    y ademas trae el pitcher abridor probable/confirmado de cada equipo.
+
+    LIMITACION (ver ProbablePitcher en connectors/sports_data.py): el ERA
+    que devuelve ESPN para un partido pasado es el acumulado A HOY, no "tal
+    como se sabia" en ese momento -- incluye starts posteriores al partido.
+    Por eso esta funcion se limita deliberadamente a una ventana corta y
+    reciente: en una temporada de ~25-30 starts por abridor, que 1-2 de
+    esos starts sean "del futuro" mueve el ERA acumulado muy poco. Es una
+    aproximacion aceptada, no una reconstruccion perfecta -- tratar este
+    backtest especifico como menos riguroso que el de collect_game_samples.
+    """
+    teams = espn.list_teams()
+    cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days_back)).isoformat()
+    schedules: dict[str, dict] = {team["id"]: espn.get_schedule_raw(team["id"]) for team in teams.values()}
+
+    samples: list[GameSample] = []
+    seen_game_keys: set[str] = set()
+    pitcher_cache: dict[str, dict[str, ProbablePitcher]] = {}  # event_id -> {team_id: ProbablePitcher}
+
+    for team in teams.values():
+        team_id = team["id"]
+        schedule = schedules[team_id]
+        for event in schedule.get("events", []):
+            if event.get("date", "") < cutoff:
+                continue
+            competitions = event.get("competitions", [])
+            if not competitions:
+                continue
+            comp = competitions[0]
+            if not comp.get("status", {}).get("type", {}).get("completed"):
+                continue
+            competitors = comp.get("competitors", [])
+            this_c = next((c for c in competitors if c.get("team", {}).get("id") == str(team_id)), None)
+            opp_c = next((c for c in competitors if c.get("team", {}).get("id") != str(team_id)), None)
+            if this_c is None or opp_c is None:
+                continue
+            opponent_id = opp_c.get("team", {}).get("id")
+            if opponent_id not in schedules:
+                continue
+
+            game_date = event.get("date", "")
+            game_key = "|".join(sorted([team_id, opponent_id])) + "|" + game_date
+            is_home = this_c.get("homeAway") == "home"
+            if game_key in seen_game_keys or not is_home:
+                continue
+            seen_game_keys.add(game_key)
+
+            try:
+                own_score = float(this_c.get("score", {}).get("value", this_c.get("score")))
+                opp_score = float(opp_c.get("score", {}).get("value", opp_c.get("score")))
+            except (TypeError, ValueError):
+                continue
+
+            home_record = espn.summarize_recent_record(schedule, team_id, last_n=RECENT_GAMES_WINDOW, before_date=game_date)
+            away_record = espn.summarize_recent_record(schedules[opponent_id], opponent_id, last_n=RECENT_GAMES_WINDOW, before_date=game_date)
+            if min(home_record.games_considered, away_record.games_considered) < MIN_PRIOR_GAMES_TO_EVALUATE:
+                continue
+
+            event_id = event.get("id")
+            if event_id not in pitcher_cache:
+                try:
+                    pitcher_cache[event_id] = espn.get_probable_pitchers(event_id)
+                except Exception:
+                    pitcher_cache[event_id] = {}
+            pitchers = pitcher_cache[event_id]
+            home_pitcher = pitchers.get(team_id)
+            away_pitcher = pitchers.get(opponent_id)
+
+            away_team_abbr = next((t["abbreviation"] for t in teams.values() if t["id"] == opponent_id), "?")
+            samples.append(
+                GameSample(
+                    date=game_date,
+                    home_team=team["abbreviation"],
+                    away_team=away_team_abbr,
+                    home_record=home_record,
+                    away_record=away_record,
+                    actual_home_won=1 if own_score > opp_score else 0,
+                    home_pitcher_era=home_pitcher.era if home_pitcher else None,
+                    away_pitcher_era=away_pitcher.era if away_pitcher else None,
+                )
+            )
+
+    samples.sort(key=lambda s: s.date)
+    return samples
 
 
 def brier_score(preds: list[dict]) -> float:
@@ -221,11 +316,75 @@ def grid_search(train_samples: list[GameSample]) -> ModelWeights:
     return best_weights
 
 
+def pitcher_grid_search(days_back: int = 14) -> None:
+    """Backtest enfocado del factor de pitcher abridor (solo MLB, ventana corta).
+
+    Ver el docstring de collect_recent_game_samples_with_pitchers para la
+    limitacion de sesgo de informacion futura que justifica usar una
+    ventana corta en vez del dataset completo de la temporada.
+    """
+    league = get_league("MLB")
+    espn = EspnSportsDataClient(league.espn_sport_slug, league.espn_league_slug)
+
+    print(f"Recolectando los ultimos {days_back} dias de partidos de MLB con pitcher abridor confirmado...\n")
+    samples = collect_recent_game_samples_with_pitchers(espn, days_back=days_back)
+    with_pitchers = [s for s in samples if s.home_pitcher_era is not None and s.away_pitcher_era is not None]
+    print(f"Partidos en la ventana: {len(samples)}. Con pitcher confirmado en ambos lados: {len(with_pitchers)}.\n")
+    if len(with_pitchers) < 20:
+        print("Muy pocos partidos con pitcher confirmado en esta ventana para un backtest confiable. Prueba con --pitcher-search-days mas grande.")
+        return
+
+    split_idx = int(len(with_pitchers) * TRAIN_FRACTION)
+    train_samples, test_samples = with_pitchers[:split_idx], with_pitchers[split_idx:]
+    print(f"Split cronologico: {len(train_samples)} entrenamiento, {len(test_samples)} prueba (fuera de muestra)\n")
+
+    baseline_weights = MLB_WEIGHTS  # pitcher_era_weight=0.0 en el default actual
+    print("=== Sin factor de pitcher (pesos MLB actuales), evaluado en TEST ===")
+    report(predict_all(test_samples, baseline_weights), "MLB - sin pitcher - TEST")
+
+    candidates = [0.0, 0.03, 0.06, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]
+    best_weight, best_brier = 0.0, float("inf")
+    for candidate in candidates:
+        weights = ModelWeights(
+            recent_form_weight=MLB_WEIGHTS.recent_form_weight,
+            point_diff_weight=MLB_WEIGHTS.point_diff_weight,
+            home_advantage_logit=MLB_WEIGHTS.home_advantage_logit,
+            injury_penalty_per_out_starter=MLB_WEIGHTS.injury_penalty_per_out_starter,
+            pitcher_era_weight=candidate,
+        )
+        b = brier_score(predict_all(train_samples, weights))
+        print(f"  pitcher_era_weight={candidate:.2f} -> brier en TRAIN = {b:.4f}")
+        if b < best_brier:
+            best_brier, best_weight = b, candidate
+
+    print(f"\nMejor pitcher_era_weight en TRAIN: {best_weight} (brier={best_brier:.4f})\n")
+    best_weights_obj = ModelWeights(
+        recent_form_weight=MLB_WEIGHTS.recent_form_weight,
+        point_diff_weight=MLB_WEIGHTS.point_diff_weight,
+        home_advantage_logit=MLB_WEIGHTS.home_advantage_logit,
+        injury_penalty_per_out_starter=MLB_WEIGHTS.injury_penalty_per_out_starter,
+        pitcher_era_weight=best_weight,
+    )
+    print("=== Con ese pitcher_era_weight, evaluado en TEST (fuera de muestra, lo que importa) ===")
+    report(predict_all(test_samples, best_weights_obj), "MLB - con pitcher - TEST")
+    print(
+        "Nota: ventana corta y reciente para acotar el sesgo de informacion futura del ERA "
+        "(ver docstring de collect_recent_game_samples_with_pitchers). Con una muestra chica, "
+        "trata este resultado con mas cautela que el backtest completo de la temporada."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--league", default="MLB")
     parser.add_argument("--search", action="store_true", help="Corre grid search train/test para recalibrar pesos")
+    parser.add_argument("--pitcher-search", action="store_true", help="Backtest enfocado del factor de pitcher abridor (solo MLB)")
+    parser.add_argument("--pitcher-search-days", type=int, default=14, help="Ventana de dias hacia atras para --pitcher-search")
     args = parser.parse_args()
+
+    if args.pitcher_search:
+        pitcher_grid_search(days_back=args.pitcher_search_days)
+        return
 
     league = get_league(args.league)
     espn = EspnSportsDataClient(league.espn_sport_slug, league.espn_league_slug)

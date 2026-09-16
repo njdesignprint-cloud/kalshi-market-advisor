@@ -91,6 +91,26 @@ class InjuryReport:
     comment: str
 
 
+@dataclass
+class ProbablePitcher:
+    """Pitcher abridor probable/confirmado de un equipo para un partido, con su ERA/WHIP.
+
+    LIMITACION IMPORTANTE: el endpoint de ESPN de donde sale esto siempre
+    refleja las estadisticas ACUMULADAS A HOY del pitcher, sin importar la
+    fecha del partido consultado. Para partidos futuros es exactamente lo
+    que se quiere (su forma antes de que ocurra el partido). Para
+    reconstruir un partido YA JUGADO hace tiempo, estas cifras incluirian
+    starts posteriores a ese partido (informacion del futuro) -- por eso
+    el backtesting de esta senal solo usa una ventana corta de partidos
+    recientes, donde ese sesgo es pequeno. Ver models/probability_model.py
+    y tests/backtest_probability_model.py.
+    """
+
+    name: str
+    era: float | None
+    whip: float | None
+
+
 class SportsDataError(RuntimeError):
     pass
 
@@ -178,6 +198,54 @@ class EspnSportsDataClient:
                 continue
             return this_team.get("homeAway") == "home"
         return None
+
+    def find_event_id(self, schedule_data: dict, opponent_id: str, on_or_after: str | None = None) -> str | None:
+        """Busca en el calendario el id de ESPN del partido contra `opponent_id`.
+
+        Se usa para poder consultar /summary (pitcher abridor probable,
+        etc.) de ese partido especifico. Devuelve None si no se encuentra.
+        """
+        for event in schedule_data.get("events", []):
+            competitions = event.get("competitions", [])
+            if not competitions:
+                continue
+            competitors = competitions[0].get("competitors", [])
+            opp = next((c for c in competitors if c.get("team", {}).get("id") == str(opponent_id)), None)
+            if opp is None:
+                continue
+            if on_or_after and event.get("date", "") < on_or_after:
+                continue
+            return event.get("id")
+        return None
+
+    def get_probable_pitchers(self, event_id: str) -> dict[str, ProbablePitcher]:
+        """Devuelve {team_id_ESPN: ProbablePitcher} para un partido de MLB.
+
+        Ver el docstring de ProbablePitcher para la limitacion sobre el
+        sesgo de informacion futura al usar esto en partidos ya jugados.
+        Si uno de los dos equipos todavia no tiene pitcher confirmado,
+        simplemente no aparece en el diccionario devuelto -- quien llama
+        debe tratar eso como dato faltante, no como "sin pitcher".
+        """
+        url = f"{ESPN_SITE_BASE}/{self.sport_slug}/{self.league_slug}/summary"
+        data = self._get(url, {"event": event_id})
+        competitions = data.get("header", {}).get("competitions", [])
+        if not competitions:
+            return {}
+        result: dict[str, ProbablePitcher] = {}
+        for competitor in competitions[0].get("competitors", []):
+            team_id = competitor.get("team", {}).get("id")
+            probables = competitor.get("probables") or []
+            if not team_id or not probables:
+                continue
+            categories = probables[0].get("statistics", {}).get("splits", {}).get("categories", [])
+            stats = {c.get("name"): c.get("value") for c in categories}
+            result[str(team_id)] = ProbablePitcher(
+                name=probables[0].get("athlete", {}).get("displayName", ""),
+                era=stats.get("ERA"),
+                whip=stats.get("WHIP"),
+            )
+        return result
 
     def get_recent_record(self, team_id: str, last_n: int = 10) -> TeamRecord:
         """Calcula record reciente, splits local/visitante y diferencial de puntos.

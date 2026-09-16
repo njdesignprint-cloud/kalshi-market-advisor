@@ -169,6 +169,30 @@ Cada liga nueva deberia pasar por este mismo proceso (`--search`) antes
 de confiar en los pesos por defecto -- no asumas que los pesos de
 NBA/NFL sirven para un deporte con una distribucion de varianza distinta.
 
+### Pitcher abridor (solo MLB)
+
+En MLB, el analyzer trae el pitcher abridor probable de cada equipo y su
+ERA de temporada (via ESPN), y el modelo lo usa como una senal adicional:
+un abridor con mejor ERA (mas bajo) que el del rival sube la probabilidad
+de ganar de su equipo. Si no se pudo confirmar el abridor de alguno de
+los dos equipos, este factor simplemente no se aplica -- no se inventa un
+valor (ver nota del mercado en el dashboard).
+
+**Limitacion importante y por que el backtest de esto es distinto:** el
+ERA que devuelve ESPN para un partido ya jugado es el acumulado A HOY
+(incluye starts posteriores a ese partido), no el que existia en ese
+momento -- usarlo para validar toda la temporada meteria informacion del
+futuro. Por eso este factor especifico (`pitcher_era_weight`) se calibro
+con `tests/backtest_probability_model.py --pitcher-search`, que solo mira
+una ventana corta y reciente de partidos (por defecto 14 dias, ajustable
+con `--pitcher-search-days`), donde ese sesgo es pequeno porque 1-2 starts
+de mas casi no mueven un ERA acumulado de 20-30 starts. Con ventanas de 21
+y 28 dias, el Brier score fuera de muestra mejoro de forma consistente
+(~0.246 sin el factor de pitcher -> ~0.233 con el factor) -- la mejora mas
+grande que se ha visto en este modelo para MLB. Aun asi, es una muestra
+mas chica que el backtest de temporada completa; tratala con la cautela
+correspondiente.
+
 ## Como agregar una categoria de mercado nueva
 
 1. Confirma que la liga tiene en Kalshi una serie de "ganador de partido"
@@ -189,13 +213,16 @@ Ningun otro modulo deberia necesitar cambios estructurales.
   decision basada en datos objetivos y publicos, no una prediccion
   confiable por si sola.
 - **El modelo de probabilidad es simple a proposito** (record reciente,
-  local/visitante, diferencial de puntos, ajuste crudo por lesiones).
-  Para NBA, NFL y NHL sus pesos son heuristicos y **no estan validados
-  con backtesting historico** (NHL todavia no tiene partidos jugados de
-  la temporada nueva para poder validarlos). Para MLB si se corrio el
-  backtest (ver seccion arriba) y el resultado fue honesto: incluso
-  recalibrado, el modelo apenas mejora una linea base ingenua -- tratalo
-  con escepticismo extra en esa liga.
+  local/visitante, diferencial de puntos, ajuste crudo por lesiones, y en
+  MLB tambien el pitcher abridor). Para NBA, NFL y NHL sus pesos son
+  heuristicos y **no estan validados con backtesting historico** (NHL
+  todavia no tiene partidos jugados de la temporada nueva para poder
+  validarlos). Para MLB si se corrio el backtest (ver seccion arriba): el
+  record reciente/diferencial de carreras apenas mejora una linea base
+  ingenua, pero el pitcher abridor si mostro una mejora real y consistente
+  -- aun asi, es un factor validado con una ventana corta de partidos
+  recientes (no la temporada completa), asi que tratalo con cautela
+  proporcional a esa muestra mas chica.
 - El ajuste por lesiones es una senal cruda: penaliza jugadores marcados
   "Out" por igual, sin distinguir una estrella de un suplente.
 - Al inicio de temporada (pretemporada, primeras semanas) puede no haber

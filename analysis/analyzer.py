@@ -95,6 +95,7 @@ def analyze_league(
     series_ticker: str,
     fee_multiplier: float = 1.0,
     recent_games_window: int = 10,
+    uses_starting_pitcher: bool = False,
 ) -> AnalysisResult:
     result = AnalysisResult(league=league_key)
     weights = get_weights_for_league(league_key)
@@ -146,9 +147,20 @@ def analyze_league(
         injuries_a = injuries_by_team_id.get(team_a["id"], [])
         injuries_b = injuries_by_team_id.get(team_b["id"], [])
 
-        for market, team, opponent, record, opp_record, is_home, injuries, opp_injuries in (
-            (market_a, team_a, team_b, record_a, record_b, is_home_a, injuries_a, injuries_b),
-            (market_b, team_b, team_a, record_b, record_a, is_home_b, injuries_b, injuries_a),
+        pitcher_era_a: float | None = None
+        pitcher_era_b: float | None = None
+        if uses_starting_pitcher:
+            event_id = sports_client.find_event_id(schedule_a, team_b["id"])
+            if event_id:
+                pitchers = sports_client.get_probable_pitchers(event_id)
+                pitcher_a = pitchers.get(team_a["id"])
+                pitcher_b = pitchers.get(team_b["id"])
+                pitcher_era_a = pitcher_a.era if pitcher_a else None
+                pitcher_era_b = pitcher_b.era if pitcher_b else None
+
+        for market, team, opponent, record, opp_record, is_home, injuries, opp_injuries, pitcher_era, opp_pitcher_era in (
+            (market_a, team_a, team_b, record_a, record_b, is_home_a, injuries_a, injuries_b, pitcher_era_a, pitcher_era_b),
+            (market_b, team_b, team_a, record_b, record_a, is_home_b, injuries_b, injuries_a, pitcher_era_b, pitcher_era_a),
         ):
             if market.yes_ask is None:
                 result.skipped.append(SkippedMarket(market.ticker, "Sin precio yes_ask disponible (mercado sin liquidez)."))
@@ -161,6 +173,8 @@ def analyze_league(
                 team_injuries=injuries,
                 opponent_injuries=opp_injuries,
                 weights=weights,
+                team_pitcher_era=pitcher_era,
+                opponent_pitcher_era=opp_pitcher_era,
             )
             if is_home is None:
                 estimate.notes.append("Localia no confirmada contra el calendario de ESPN; se asumio visitante por defecto (conservador).")

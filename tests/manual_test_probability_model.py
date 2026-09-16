@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from connectors.sports_data import InjuryReport, TeamRecord  # noqa: E402
-from models.probability_model import estimate_win_probability  # noqa: E402
+from models.probability_model import ModelWeights, estimate_win_probability  # noqa: E402
 
 
 def record(abbr, wins, losses, hw=None, hl=None, aw=None, al=None, diff=0.0):
@@ -59,6 +59,26 @@ def main():
     est_small = estimate_win_probability(small_a, small_b, team_is_home=True)
     assert est_small.confidence in ("baja", "media")
     print("OK muestra chica reduce confianza:", est_small.confidence, round(est_small.probability, 3))
+
+    # Caso 6: pitcher abridor -- con peso 0 (default) no debe cambiar nada
+    even_a2 = record("EVA", 5, 5, diff=0.0)
+    even_b2 = record("EVB", 5, 5, diff=0.0)
+    neutral_weights = ModelWeights(recent_form_weight=0.0, point_diff_weight=0.0, home_advantage_logit=0.0, pitcher_era_weight=0.0)
+    est_no_weight = estimate_win_probability(even_a2, even_b2, team_is_home=False, weights=neutral_weights, team_pitcher_era=2.50, opponent_pitcher_era=5.50)
+    assert est_no_weight.probability == 0.5
+    print("OK pitcher_era_weight=0 no tiene efecto:", est_no_weight.probability)
+
+    # Caso 7: con peso configurado, un abridor mejor (ERA mas bajo) debe subir la probabilidad
+    pitcher_weights = ModelWeights(recent_form_weight=0.0, point_diff_weight=0.0, home_advantage_logit=0.0, pitcher_era_weight=0.15)
+    est_better_pitcher = estimate_win_probability(even_a2, even_b2, team_is_home=False, weights=pitcher_weights, team_pitcher_era=2.50, opponent_pitcher_era=5.50)
+    assert est_better_pitcher.probability > 0.5
+    print("OK mejor pitcher abridor sube la probabilidad:", round(est_better_pitcher.probability, 3))
+
+    # Caso 8: si falta el ERA de alguno de los dos, el factor no se aplica (no se inventa)
+    est_missing_era = estimate_win_probability(even_a2, even_b2, team_is_home=False, weights=pitcher_weights, team_pitcher_era=2.50, opponent_pitcher_era=None)
+    assert est_missing_era.probability == 0.5
+    assert any("No se pudo confirmar el pitcher" in n for n in est_missing_era.notes)
+    print("OK ERA faltante de un lado no inventa el factor:", est_missing_era.probability)
 
     print("Todas las pruebas del modelo de probabilidad pasaron.")
 
