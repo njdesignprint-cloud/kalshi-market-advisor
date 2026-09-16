@@ -188,10 +188,26 @@ class EspnSportsDataClient:
         data = self.get_schedule_raw(team_id)
         return self.summarize_recent_record(data, team_id, last_n=last_n)
 
-    def summarize_recent_record(self, data: dict, team_id: str, last_n: int = 10) -> TeamRecord:
+    def summarize_recent_record(
+        self,
+        data: dict,
+        team_id: str,
+        last_n: int = 10,
+        before_date: str | None = None,
+    ) -> TeamRecord:
+        """Resume forma reciente a partir de un calendario ya descargado.
+
+        `before_date` (ISO 8601) permite reconstruir el record "tal como se
+        conocia" antes de una fecha dada, usando solo partidos completados
+        estrictamente anteriores a esa fecha. Se usa para backtesting (ver
+        tests/backtest_probability_model.py); en produccion se deja en None
+        y simplemente se toman los ultimos partidos completados hasta hoy.
+        """
         team_info = data.get("team", {})
         completed = []
         for event in data.get("events", []):
+            if before_date and event.get("date", "") >= before_date:
+                continue
             competitions = event.get("competitions", [])
             if not competitions:
                 continue

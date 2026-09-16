@@ -7,7 +7,7 @@ esperado (EV) real, y genera una recomendacion de asignacion de bankroll
 en texto explicado -- para que la decidas y la ejecutes tu mismo,
 manualmente, en kalshi.com.
 
-Empieza con NBA, NFL y MLB. La arquitectura (`config.py` + `connectors/` +
+Empieza con NBA, NFL, MLB y NHL. La arquitectura (`config.py` + `connectors/` +
 `models/` + `analysis/`) esta pensada para agregar categorias nuevas
 (NHL, etc.) sin reescribir el resto del pipeline.
 
@@ -86,6 +86,40 @@ al instante (misma logica que `analysis/portfolio.py`, reimplementada en
 JavaScript). Para analizar otra fecha o traer precios actualizados hay
 que volver a correr `main.py`.
 
+## Backtesting y recalibracion del modelo
+
+`tests/backtest_probability_model.py` reconstruye, para cada partido ya
+jugado de una liga, la probabilidad que el modelo hubiera dado usando
+solo informacion anterior a ese partido, y la compara contra el
+resultado real. Esto valida **calibracion** (si el modelo dice 65%, gano
+el equipo como el 65% de las veces?), no rentabilidad contra Kalshi (la
+API publica no expone precios historicos por fecha pasada).
+
+```bash
+python tests/backtest_probability_model.py                # calibracion con los pesos actuales de la liga
+python tests/backtest_probability_model.py --search        # grid search train/test para recalibrar
+python tests/backtest_probability_model.py --league NBA    # otra liga, si ya tiene partidos suficientes
+```
+
+**Hallazgo real (MLB, temporada 2026, 2225 partidos):** los pesos
+heuristicos originales (pensados para NBA/NFL) dieron un Brier score de
+**0.2556 en el split de prueba fuera de muestra** -- peor que simplemente
+adivinar 50/50 (0.25). El modelo estaba sobrestimando su propia confianza
+de forma sistemática en un deporte de mucha mas varianza por partido.
+Se recalibraron los pesos especificamente para MLB con un split
+cronologico 70/30 entrenamiento/prueba (grid search en el 70%, verificado
+en el 30% restante para no sobreajustar). El resultado recalibrado
+(`MLB_WEIGHTS` en `models/probability_model.py`) da 0.2486 en el mismo
+split de prueba -- una mejora real pero **modesta**, muy cerca de la
+linea base ingenua de "siempre predecir la tasa real de victoria de
+local". Conclusion honesta: en MLB, la señal de forma reciente y
+diferencial de carreras es mucho mas debil que en NBA/NFL, y cualquier
+edge que el analyzer reporte ahi merece escepticismo extra.
+
+Cada liga nueva deberia pasar por este mismo proceso (`--search`) antes
+de confiar en los pesos por defecto -- no asumas que los pesos de
+NBA/NFL sirven para un deporte con una distribucion de varianza distinta.
+
 ## Como agregar una categoria de mercado nueva
 
 1. Confirma que la liga tiene en Kalshi una serie de "ganador de partido"
@@ -106,9 +140,13 @@ Ningun otro modulo deberia necesitar cambios estructurales.
   decision basada en datos objetivos y publicos, no una prediccion
   confiable por si sola.
 - **El modelo de probabilidad es simple a proposito** (record reciente,
-  local/visitante, diferencial de puntos, ajuste crudo por lesiones) y
-  **no esta validado con backtesting historico**. Sus pesos son
-  heuristicos, no ajustados contra resultados reales.
+  local/visitante, diferencial de puntos, ajuste crudo por lesiones).
+  Para NBA, NFL y NHL sus pesos son heuristicos y **no estan validados
+  con backtesting historico** (NHL todavia no tiene partidos jugados de
+  la temporada nueva para poder validarlos). Para MLB si se corrio el
+  backtest (ver seccion arriba) y el resultado fue honesto: incluso
+  recalibrado, el modelo apenas mejora una linea base ingenua -- tratalo
+  con escepticismo extra en esa liga.
 - El ajuste por lesiones es una senal cruda: penaliza jugadores marcados
   "Out" por igual, sin distinguir una estrella de un suplente.
 - Al inicio de temporada (pretemporada, primeras semanas) puede no haber

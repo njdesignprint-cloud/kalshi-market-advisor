@@ -1,4 +1,4 @@
-"""Modelo de probabilidad para partidos de un-contra-uno (NBA/NFL).
+"""Modelo de probabilidad para partidos de un-contra-uno (NBA/NFL/MLB/...).
 
 QUE HACE: combina tres senales objetivas y publicas -- forma reciente
 (record de los ultimos N partidos), ventaja de local/visitante, y
@@ -7,11 +7,15 @@ equipo gane su proximo partido. Aplica un ajuste pequeno y conservador por
 lesiones de jugadores marcados como "Out".
 
 SUPUESTOS (explicitos):
-  1. Los pesos que combinan cada senal (RECENT_FORM_WEIGHT,
-     POINT_DIFF_WEIGHT, HOME_ADVANTAGE_LOGIT, INJURY_PENALTY_PER_OUT_STARTER)
-     son heuristicos, elegidos por razonabilidad estadistica general, NO
-     ajustados (fitted) contra datos historicos de resultados reales. Este
-     modelo no ha sido validado con backtesting.
+  1. Los pesos que combinan cada senal viven en `ModelWeights`. Los pesos
+     por defecto (`DEFAULT_WEIGHTS`, usados por NBA/NFL) son heuristicos,
+     elegidos por razonabilidad estadistica general, NO ajustados contra
+     datos historicos -- no fueron validados con backtesting. `MLB_WEIGHTS`
+     es la excepcion: SI fue ajustado y verificado con
+     tests/backtest_probability_model.py contra resultados reales (ver
+     README, seccion de backtesting). Cualquier liga nueva deberia pasar
+     por el mismo proceso antes de confiar en los pesos por defecto --
+     no asumas que sirven fuera de NBA/NFL.
   2. "Forma reciente" usa como maximo los ultimos RECENT_GAMES_WINDOW
      partidos finalizados. No pondera la calidad del rival vencido/perdido
      (una racha contra rivales debiles pesa igual que contra rivales
@@ -46,12 +50,60 @@ from connectors.sports_data import InjuryReport, TeamRecord
 RECENT_GAMES_WINDOW = 10
 MIN_GAMES_FOR_FULL_CONFIDENCE = 5
 
-RECENT_FORM_WEIGHT = 1.6         # peso del diferencial de win% reciente
-POINT_DIFF_WEIGHT = 0.045        # peso del diferencial de puntos promedio (por punto)
-HOME_ADVANTAGE_LOGIT = 0.25      # ventaja fija de local, en escala logit
-INJURY_PENALTY_PER_OUT_STARTER = 0.12  # penalizacion en escala logit por jugador "Out"
-
 _MAX_OUT_PLAYERS_COUNTED = 3  # evita que un reporte ruidoso hunda la probabilidad a 0
+
+
+@dataclass(frozen=True)
+class ModelWeights:
+    """Pesos que combinan cada senal, en escala logit.
+
+    Los pesos por defecto (NBA/NFL) son heuristicos, sin ajustar contra
+    datos historicos. `MLB_WEIGHTS`, en cambio, SI fue ajustado con
+    backtesting real (ver tests/backtest_probability_model.py y el
+    README) porque los pesos originales, pensados para deportes de baja
+    varianza por partido, resultaron mal calibrados para MLB (peor que
+    adivinar 50/50). Si agregas una liga nueva con caracteristicas de
+    varianza distintas a NBA/NFL, corre el backtest antes de confiar en
+    los pesos por defecto.
+    """
+
+    recent_form_weight: float = 1.6          # peso del diferencial de win% reciente
+    point_diff_weight: float = 0.045         # peso del diferencial de puntos/carreras promedio
+    home_advantage_logit: float = 0.25       # ventaja fija de local, en escala logit
+    injury_penalty_per_out_starter: float = 0.12  # penalizacion por jugador "Out"
+
+
+DEFAULT_WEIGHTS = ModelWeights()
+
+# Recalibrado con tests/backtest_probability_model.py --search contra la
+# temporada MLB 2026 real (2225 partidos, split cronologico 70/30
+# entrenamiento/prueba, grid search en TRAIN, verificado en TEST fuera de
+# muestra). Los pesos por defecto daban Brier score 0.2556 en TEST (apenas
+# peor que 50/50 = 0.25); estos pesos dan 0.2486 en TEST. La mejora es
+# real pero MODESTA: en MLB la senal de forma reciente/diferencial de
+# carreras es mucho mas debil que en NBA/NFL (mayor varianza por partido),
+# y el resultado recalibrado queda muy cerca de la linea base ingenua
+# "siempre predecir la tasa real de victoria de local". Tratar cualquier
+# edge que el analyzer encuentre en MLB con escepticismo extra por esto
+# mismo. home_advantage_logit=0.078 es literalmente el logit de la tasa de
+# victoria de local observada en el set de entrenamiento (52%); el grid
+# search no encontro nada mejor que usar directamente el dato empirico.
+# injury_penalty_per_out_starter no se recalibro (ESPN no expone lesiones
+# historicas por fecha pasada para poder evaluarlo con backtesting).
+MLB_WEIGHTS = ModelWeights(
+    recent_form_weight=0.2,
+    point_diff_weight=0.03,
+    home_advantage_logit=0.078,
+    injury_penalty_per_out_starter=0.12,
+)
+
+LEAGUE_WEIGHTS: dict[str, ModelWeights] = {
+    "MLB": MLB_WEIGHTS,
+}
+
+
+def get_weights_for_league(league_key: str) -> ModelWeights:
+    return LEAGUE_WEIGHTS.get(league_key.upper(), DEFAULT_WEIGHTS)
 
 
 @dataclass
@@ -84,6 +136,7 @@ def estimate_win_probability(
     team_is_home: bool,
     team_injuries: list[InjuryReport] | None = None,
     opponent_injuries: list[InjuryReport] | None = None,
+    weights: ModelWeights = DEFAULT_WEIGHTS,
 ) -> ProbabilityEstimate:
     """Estima P(team gana) usando forma reciente, local/visitante y lesiones.
 
@@ -115,13 +168,13 @@ def estimate_win_probability(
     team_win_pct = team.win_pct if team.win_pct is not None else 0.5
     opp_win_pct = opponent.win_pct if opponent.win_pct is not None else 0.5
 
-    form_component = RECENT_FORM_WEIGHT * (team_win_pct - opp_win_pct)
-    point_diff_component = POINT_DIFF_WEIGHT * (team.avg_point_differential - opponent.avg_point_differential)
-    home_component = HOME_ADVANTAGE_LOGIT if team_is_home else -HOME_ADVANTAGE_LOGIT
+    form_component = weights.recent_form_weight * (team_win_pct - opp_win_pct)
+    point_diff_component = weights.point_diff_weight * (team.avg_point_differential - opponent.avg_point_differential)
+    home_component = weights.home_advantage_logit if team_is_home else -weights.home_advantage_logit
 
     team_out = _count_out_players(team_injuries)
     opp_out = _count_out_players(opponent_injuries)
-    injury_component = INJURY_PENALTY_PER_OUT_STARTER * (opp_out - team_out)
+    injury_component = weights.injury_penalty_per_out_starter * (opp_out - team_out)
     if team_out or opp_out:
         notes.append(
             f"Ajuste por lesiones: {team.abbreviation} tiene {team_out} jugador(es) 'Out', "

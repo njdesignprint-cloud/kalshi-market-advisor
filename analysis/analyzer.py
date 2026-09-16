@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 from connectors.kalshi_client import KalshiClient, MarketQuote
 from connectors.sports_data import EspnSportsDataClient
-from models.probability_model import ProbabilityEstimate, estimate_win_probability
+from models.probability_model import ProbabilityEstimate, estimate_win_probability, get_weights_for_league
 
 BASE_FEE_RATE = 0.07  # formula general publicada por Kalshi (ver docstring)
 
@@ -97,6 +97,7 @@ def analyze_league(
     recent_games_window: int = 10,
 ) -> AnalysisResult:
     result = AnalysisResult(league=league_key)
+    weights = get_weights_for_league(league_key)
 
     quotes = kalshi_client.get_active_markets_for_series(series_ticker)
     if not quotes:
@@ -159,6 +160,7 @@ def analyze_league(
                 team_is_home=bool(is_home) if is_home is not None else False,
                 team_injuries=injuries,
                 opponent_injuries=opp_injuries,
+                weights=weights,
             )
             if is_home is None:
                 estimate.notes.append("Localia no confirmada contra el calendario de ESPN; se asumio visitante por defecto (conservador).")

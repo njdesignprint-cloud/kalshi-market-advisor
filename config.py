@@ -49,6 +49,13 @@ LEAGUES: dict[str, LeagueConfig] = {
         espn_sport_slug="baseball",
         espn_league_slug="mlb",
     ),
+    "NHL": LeagueConfig(
+        key="NHL",
+        display_name="NHL",
+        kalshi_series_ticker="KXNHLGAME",
+        espn_sport_slug="hockey",
+        espn_league_slug="nhl",
+    ),
 }
 
 
