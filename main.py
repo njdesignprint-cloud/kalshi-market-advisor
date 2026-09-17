@@ -16,6 +16,7 @@ import json
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -43,13 +44,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Las ligas que cubrimos son de EE.UU. y sus tickers de Kalshi fechan cada
+# partido por el dia calendario en horario del Este (ej. un juego de las
+# 19:40 ET va con fecha de hoy). Comparar la fecha en UTC en vez de en esta
+# zona hace que cualquier partido nocturno (que en UTC ya cae en el dia
+# siguiente) desaparezca al pedir "hoy" y solo aparezca si se pide "manana",
+# lo cual es justo al reves de lo que espera quien usa la herramienta.
+GAME_DAY_TIMEZONE = ZoneInfo("America/New_York")
+
+
 def _matches_date(opportunity: Opportunity, target_date: str) -> bool:
     if not opportunity.game_datetime:
         return False
     try:
-        game_date = datetime.fromisoformat(opportunity.game_datetime.replace("Z", "+00:00")).date().isoformat()
+        game_dt = datetime.fromisoformat(opportunity.game_datetime.replace("Z", "+00:00"))
     except ValueError:
         return False
+    game_date = game_dt.astimezone(GAME_DAY_TIMEZONE).date().isoformat()
     return game_date == target_date
 
 
