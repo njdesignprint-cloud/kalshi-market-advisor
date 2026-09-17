@@ -80,6 +80,7 @@ class Allocation:
     estimated_ev_dollars: float
     rationale: str
     risks: str
+    game_datetime: str | None = None
 
 
 @dataclass
@@ -183,6 +184,7 @@ def build_portfolio_recommendation(
                 estimated_ev_dollars=ev_dollars,
                 rationale=rationale,
                 risks=risks,
+                game_datetime=opp.game_datetime,
             )
         )
 

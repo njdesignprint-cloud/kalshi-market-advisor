@@ -225,6 +225,7 @@ function buildRecommendation(opportunities, bankroll, date) {
       stake_dollars: stake, stake_fraction_of_bankroll: finalFraction,
       estimated_ev_dollars: stake * o.ev_return_on_cost,
       model_confidence: o.model_confidence, model_notes: o.model_notes,
+      game_datetime: o.game_datetime,
     });
   });
 
@@ -246,6 +247,22 @@ function calcContractsForDesiredPayout(desiredPayout, price) {
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
+// Siempre en hora del Este (America/New_York), la misma zona que usa main.py
+// para decidir a que dia calendario pertenece cada partido. Mostrar el dia de
+// la semana ademas de la fecha es deliberado: series de varios dias entre los
+// mismos dos equipos (ej. Detroit vs Chicago) generan un ticker por dia, y ver
+// solo la hora no alcanza para notar que agarraste el partido de otro dia.
+const GAME_DATE_FORMATTER = new Intl.DateTimeFormat("es", {
+  timeZone: "America/New_York",
+  weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit",
+});
+function formatGameDate(iso) {
+  if (!iso) return "Sin fecha";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "Sin fecha";
+  return GAME_DATE_FORMATTER.format(d) + " ET";
+}
+
 function renderEmptyState() {
   document.getElementById("content").innerHTML = `
     <div class="card empty-state">
@@ -264,6 +281,7 @@ function renderOpportunitiesTable(opportunities) {
     const evClass = o.ev_per_contract_after_fee > 0 ? "pos" : "neg";
     return `<tr>
       <td>${escapeHtml(o.team_abbreviation)} vs ${escapeHtml(o.opponent_abbreviation)}${o.is_home ? " (local)" : ""}</td>
+      <td>${escapeHtml(formatGameDate(o.game_datetime))}</td>
       <td class="num">${pct(o.kalshi_implied_probability)}</td>
       <td class="num">${pct(o.model_probability)} <span class="badge ${o.model_confidence}">${o.model_confidence}</span></td>
       <td class="num ${edgeClass}">${o.edge >= 0 ? "+" : ""}${pct(o.edge)}</td>
@@ -272,7 +290,7 @@ function renderOpportunitiesTable(opportunities) {
     </tr>`;
   }).join("");
   return `<table>
-    <thead><tr><th>Partido</th><th class="num">Kalshi</th><th class="num">Modelo</th><th class="num">Edge</th><th class="num">EV/contrato</th><th>Notas del modelo</th></tr></thead>
+    <thead><tr><th>Partido</th><th>Fecha (ET)</th><th class="num">Kalshi</th><th class="num">Modelo</th><th class="num">Edge</th><th class="num">EV/contrato</th><th>Notas del modelo</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -283,6 +301,7 @@ function renderRecommendation(rec) {
   if (rec.has_recommendation && rec.allocations.length > 0) {
     const rows = rec.allocations.map(a => `<tr>
       <td>${escapeHtml(a.team_abbreviation)} vs ${escapeHtml(a.opponent_abbreviation)}<div class="rationale">${escapeHtml(a.market_ticker)}</div></td>
+      <td>${escapeHtml(formatGameDate(a.game_datetime))}</td>
       <td class="num">${money(a.stake_dollars)}</td>
       <td class="num">${pct(a.stake_fraction_of_bankroll)}</td>
       <td class="num pos">${money(a.estimated_ev_dollars)}</td>
@@ -293,7 +312,7 @@ function renderRecommendation(rec) {
       </td>
     </tr>`).join("");
     allocTable = `<table>
-      <thead><tr><th>Jugada</th><th class="num">Monto</th><th class="num">% bankroll</th><th class="num">EV estimado</th><th>Razonamiento</th><th>Si quiero recibir $X...</th></tr></thead>
+      <thead><tr><th>Jugada</th><th>Fecha (ET)</th><th class="num">Monto</th><th class="num">% bankroll</th><th class="num">EV estimado</th><th>Razonamiento</th><th>Si quiero recibir $X...</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   }

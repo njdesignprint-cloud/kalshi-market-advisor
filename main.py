@@ -64,6 +64,21 @@ def _matches_date(opportunity: Opportunity, target_date: str) -> bool:
     return game_date == target_date
 
 
+# Series entre los mismos dos equipos generan un ticker por dia (ej. Detroit
+# vs Chicago White Sox tres noches seguidas); mostrar solo la hora no alcanza
+# para notar que agarraste el partido de otro dia. Por eso el formato incluye
+# el dia de la semana, no solo la hora.
+def _format_game_datetime(game_datetime: str | None) -> str:
+    if not game_datetime:
+        return "sin fecha"
+    try:
+        game_dt = datetime.fromisoformat(game_datetime.replace("Z", "+00:00"))
+    except ValueError:
+        return "sin fecha"
+    local = game_dt.astimezone(GAME_DAY_TIMEZONE)
+    return local.strftime("%a %d-%b %I:%M%p ET")
+
+
 def run_pipeline(date: str, bankroll: float, league_keys: list[str]) -> dict:
     kalshi_client = KalshiClient()
 
@@ -136,7 +151,8 @@ def main() -> None:
     print(f"\n{rec['summary']}\n")
     if rec["has_recommendation"]:
         for alloc in rec["allocations"]:
-            print(f"  - {alloc['team_abbreviation']} vs {alloc['opponent_abbreviation']}: ${alloc['stake_dollars']:.2f} ({alloc['market_ticker']})")
+            when = _format_game_datetime(alloc.get("game_datetime"))
+            print(f"  - {alloc['team_abbreviation']} vs {alloc['opponent_abbreviation']}: ${alloc['stake_dollars']:.2f} ({alloc['market_ticker']}) -- {when}")
 
     output_path = write_dashboard(data)
     print(f"\nDashboard generado en: {output_path}")
