@@ -24,6 +24,7 @@ esta estimacion no captura. Verifica el fee schedule real antes de operar.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 from connectors.kalshi_client import KalshiClient, MarketQuote
 from connectors.sports_data import EspnSportsDataClient
@@ -79,6 +80,29 @@ def _estimate_fee_per_contract(price: float, fee_multiplier: float) -> float:
     import math
 
     return math.ceil(raw * 100) / 100
+
+
+def _espn_lookup_cutoff(market: MarketQuote) -> str | None:
+    """Cota inferior (formato ESPN, sin segundos) para desambiguar equipos que
+    se enfrentan varias veces en la temporada.
+
+    Sin esto, find_event_id() siempre devuelve el PRIMER encuentro de la
+    temporada entre dos equipos -- en la practica, para rivales de division
+    que juegan series repetidas, esto significa usar los pitchers probables
+    de un partido ya jugado hace semanas en vez de los abridores reales de
+    esta noche. El margen de 12 horas alcanza para distinguir noches
+    consecutivas de una misma serie sin arriesgarse a excluir el partido
+    correcto por una diferencia de husos horarios.
+    """
+    raw = market.occurrence_datetime or market.close_time
+    if not raw:
+        return None
+    try:
+        game_dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    cutoff = game_dt.astimezone(timezone.utc) - timedelta(hours=12)
+    return cutoff.strftime("%Y-%m-%dT%H:%MZ")
 
 
 def _group_markets_by_event(quotes: list[MarketQuote]) -> dict[str, list[MarketQuote]]:
@@ -152,7 +176,9 @@ def analyze_league(
         pitcher_innings_a: float | None = None
         pitcher_innings_b: float | None = None
         if uses_starting_pitcher:
-            event_id = sports_client.find_event_id(schedule_a, team_b["id"])
+            event_id = sports_client.find_event_id(
+                schedule_a, team_b["id"], on_or_after=_espn_lookup_cutoff(market_a)
+            )
             if event_id:
                 pitchers = sports_client.get_probable_pitchers(event_id)
                 pitcher_a = pitchers.get(team_a["id"])
