@@ -156,8 +156,15 @@ class Settlement:
 
     @property
     def net_result_dollars(self) -> float:
+        """Resultado neto real: pago recibido menos lo invertido Y las comisiones.
+
+        Verificado contra 6 liquidaciones reales de una cuenta -- sin
+        restar fee_cost_dollars, el neto quedaba sistematicamente mas alto
+        que el "Total return" que muestra Kalshi (la comision faltante).
+        Con la resta, coincide exacto en las 6.
+        """
         cost = self.yes_total_cost_dollars if self.yes_count > 0 else self.no_total_cost_dollars
-        return self.revenue_dollars - cost
+        return self.revenue_dollars - cost - self.fee_cost_dollars
 
 
 class KalshiClient:
