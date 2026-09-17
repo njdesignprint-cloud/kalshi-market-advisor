@@ -105,6 +105,30 @@ def _espn_lookup_cutoff(market: MarketQuote) -> str | None:
     return cutoff.strftime("%Y-%m-%dT%H:%MZ")
 
 
+def _market_already_started(market: MarketQuote, now: datetime) -> bool:
+    """True si el partido de este mercado ya empezo (o ya termino) segun `now`.
+
+    Kalshi mantiene un mercado en status "open" durante todo el partido en
+    vivo, no solo antes de que empiece. Este modulo solo usa estadisticas
+    previas al partido; no sabe nada del marcador o la entrada/cuarto actual.
+    Sin este corte, comparar esa probabilidad "de antes del partido" contra un
+    precio que el mercado ya ajusto en vivo puede mostrar un edge enorme que
+    en realidad es solo el modelo ignorando lo que ya paso en la cancha -- el
+    peor tipo de senal falsa, porque parece la jugada mas fuerte del dia.
+
+    Si no hay occurrence_datetime no se puede confirmar nada, asi que no se
+    excluye el mercado (mejor no filtrar de mas que arriesgarse a tapar una
+    oportunidad valida por un dato faltante).
+    """
+    if not market.occurrence_datetime:
+        return False
+    try:
+        start_dt = datetime.fromisoformat(market.occurrence_datetime.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return start_dt <= now
+
+
 def _group_markets_by_event(quotes: list[MarketQuote]) -> dict[str, list[MarketQuote]]:
     groups: dict[str, list[MarketQuote]] = {}
     for quote in quotes:
@@ -123,6 +147,7 @@ def analyze_league(
 ) -> AnalysisResult:
     result = AnalysisResult(league=league_key)
     weights = get_weights_for_league(league_key)
+    analysis_started_at = datetime.now(tz=timezone.utc)
 
     quotes = kalshi_client.get_active_markets_for_series(series_ticker)
     if not quotes:
@@ -194,6 +219,14 @@ def analyze_league(
         ):
             if market.yes_ask is None:
                 result.skipped.append(SkippedMarket(market.ticker, "Sin precio yes_ask disponible (mercado sin liquidez)."))
+                continue
+
+            if _market_already_started(market, analysis_started_at):
+                result.skipped.append(SkippedMarket(
+                    market.ticker,
+                    "El partido ya empezo (o ya termino); este modulo solo analiza el estado previo al "
+                    "partido y no sabe leer el marcador en vivo, asi que no se genera una recomendacion.",
+                ))
                 continue
 
             estimate = estimate_win_probability(
